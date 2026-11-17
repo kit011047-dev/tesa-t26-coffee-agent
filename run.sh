@@ -38,7 +38,7 @@ if ! lsof -iTCP:8050 -sTCP:LISTEN -n -P >/dev/null 2>&1; then
 else
   echo "📊 dashboard เปิดอยู่แล้ว: http://127.0.0.1:8050"
 fi
-open "http://127.0.0.1:8050" 2>/dev/null
+[ -z "${NO_OPEN:-}" ] && open "http://127.0.0.1:8050" 2>/dev/null
 
 if [ "$CHECK_ONLY" = 1 ]; then
   echo "✅ ตรวจเสร็จ (--check ไม่รัน agent)"
