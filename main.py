@@ -12,6 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import dashboard_bridge as dash                    # [T26] ส่งความคิดของ agent ไป dashboard 7 ขั้น
 import strategy
 from appraisal import appraisal_items, estimate_lots
 from llm import LLM
@@ -71,8 +72,15 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
         if lots_key != game:                        # new game (or sandbox reset): start fresh
             game, acted, tv = lots_key, set(), estimate_lots(rules, state["lots"])
             tag = hashlib.sha1(repr(lots_key).encode()).hexdigest()[:8]
-            memory = Memory(LOGS / f"memory-{state['market']}-{tag}.json")
+            mpath = LOGS / f"memory-{state['market']}-{tag}.json"
+            # [T26] sandbox อาจแจกล็อตชุดเดิมซ้ำ -> ไฟล์ความจำชื่อซ้ำกับเกมเก่า
+            # ถ้ายังไม่ส่ง appraisal = เกมเพิ่งเริ่ม -> เก็บไฟล์เก่าไว้ แล้วเริ่มความจำใหม่
+            # (ถ้าส่งแล้ว = agent รีสตาร์ทกลางเกม -> ใช้ความจำเดิมต่อ)
+            if mpath.exists() and not state.get("appraisal_submitted"):
+                mpath.rename(mpath.with_name(f"{mpath.stem}.old{int(time.time())}.json"))
+            memory = Memory(mpath)
             log("new_game", market=state["market"], lots=len(state["lots"]), tv=tv)
+            dash.start(state.get("team_id", "?"), "T26 ขั้นบันได + เรียนรู้รายผู้ซื้อ", str(api.http.base_url), tv)
         phase = state["phase"]
 
         if phase == "APPRAISAL" and not state["appraisal_submitted"]:
@@ -86,6 +94,8 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
             rid = state["round"]["round_id"]
             acted.add(rid)
             memory.record_results(state["last_results"])
+            dash.learning(state["last_results"], memory)
+            dash.round_open(state, rules)
             if any(o["round_id"] == rid for o in state["my_open_offers"]):
                 # restarted after sending this round: the market already holds our offers, and a new batch
                 # would replace them (capacity_left_kg no longer counts them, so it would offer less)
@@ -98,7 +108,10 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
             except Exception as e:                  # noqa: BLE001 — a bug in strategy must not stop the agent
                 log("strategy_crashed", error=repr(e))
                 offers, source = strategy.guard(state, ctx, strategy.rule_plan(state, ctx, strategy.candidates(state, ctx))), "rules"
+            dash.decision(state, offers, source, (time.time() - t0) * 1000, strategy.MIN_MARKUP)
+            t1 = time.time()
             sent = send_offers(api, offers) if offers else []
+            dash.action(state, len(offers), len(sent), (time.time() - t1) * 1000)
             memory.record_sent(rid, offers, state, tv)
             log("offers_sent", round=rid, source=source, n=len(sent), kg=sum(o["kg"] for o in sent),
                 seconds=round(time.time() - t0, 1), offers=offers, notes=ctx.notes)
@@ -107,6 +120,14 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
             acted.add("closed")
             memory.record_results(state["last_results"])
             log("market_closed", standings=state["standings"])
+            dash.learning(state["last_results"], memory)
+            score = None
+            if state.get("market") == "sandbox":            # ตลาดฝึกเท่านั้น: ดูคะแนนจริงหลังปิดตลาด
+                try:
+                    score = api.call("GET", "/v1/sandbox/reveal").get("score")
+                except Exception:                           # noqa: BLE001
+                    pass
+            dash.end(state["standings"], score)
             if not forever:
                 return
 

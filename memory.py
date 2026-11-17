@@ -18,7 +18,8 @@ class Memory:
 
     def record_sent(self, round_id: str, offers: list[dict], state: dict, tv: dict) -> None:
         types = {r["rfq_id"]: r["buyer_type"] for r in state["rfqs"]}
-        self.sent[round_id] = [{**o, "buyer_type": types[o["rfq_id"]],
+        ids = {r["rfq_id"]: r.get("buyer_id") for r in state["rfqs"]}    # [T26] จำผู้ซื้อรายตัว ไว้เรียนรู้เพดาน
+        self.sent[round_id] = [{**o, "buyer_type": types[o["rfq_id"]], "buyer_id": ids[o["rfq_id"]],
                                 "markup": round(o["price_per_kg"] / tv[o["lot_id"]], 3)} for o in offers]
         self.save()
 
