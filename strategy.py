@@ -37,6 +37,9 @@ OUTBID_MAX_STEP = 0.03
 SPREAD = 3                            # แบ่งกระสอบของล็อตหนึ่งไปได้ถึง 3 RFQ ต่อรอบ (กระจายความเสี่ยงแพ้ใบเดียว)
 CAP_ORDER = "tv"                      # capacity จำกัด: "tv" = ล็อตแพงก่อน | "margin" = กำไรเหนือ 0.80×TV มากสุดก่อน
 CAP_PRESSURE = 0.02                   # capacity ไม่พอขายหมด -> ลดราคาเพิ่มเท่านี้
+LADDER_ACROSS = False                 # ใบละ 1 กระสอบ + ยังไม่รู้จักผู้ซื้อ -> ไล่ขั้นบันไดข้ามใบ
+SKIP_SPEC_FAILED = True               # เคยโดน SPEC_MISMATCH กับประเภทผู้ซื้อไหน -> เลิกยื่นคู่นั้น (และปล่อยไปขาย Instant ได้ทันที)
+USE_CALENDAR = False                  # ใช้ demand_weight จากปฏิทินตลาด แบ่งขายมากในรอบที่ต้องการซื้อสูง
 RAISE_STRICT = False                 # True = ขายได้แต่มีซองแพ้ที่ราคาเท่ากัน -> ไม่ขยับขึ้น
 SOLD = ("ACCEPTED", "PARTIAL")
 
@@ -65,25 +68,62 @@ def rounds_left(state: dict, ctx: Context) -> int:
     return total if rnd["kind"] == "practice" else total - rnd["number"] + 1
 
 
+def demand_weights(ctx: Context, total: int) -> dict[int, float]:
+    """[T26] ปฏิทินตลาด -> น้ำหนักความต้องการซื้อของแต่ละรอบ (ไม่มีข้อมูล = 1.0 ทุกรอบ)"""
+    w = {r: 1.0 for r in range(1, total + 1)}
+    for band in ctx.calendar or []:
+        try:
+            a, _, b = str(band.get("rounds", "")).partition("-")
+            lo, hi = int(a), int(b or a)
+            dw = float(band.get("demand_weight") or 1.0)
+            for r in range(lo, hi + 1):
+                if r in w:
+                    w[r] = max(dw, 0.05)
+        except (TypeError, ValueError):
+            continue
+    return w
+
+
 def sell_budget(state: dict, ctx: Context) -> dict[str, int]:
     """How many kg of each lot to offer this round: spread sales over the rounds that are left."""
-    # TODO: use the Market Calendar — sell more in festival rounds (Specialty pays well), less when demand is low
+    # [T26] ใช้ปฏิทินตลาด: รอบที่ความต้องการซื้อสูง (เทศกาล) แบ่งขายมากกว่า รอบที่ต่ำแบ่งน้อยกว่า
+    #       ปฏิทินเรียบ (ปกติทุกรอบ) = แบ่งเท่า ๆ กันเหมือนเดิม
     left = rounds_left(state, ctx)
+    total = ctx.rules["timeline"]["rounds"]
+    now = total - left + 1
+    w = demand_weights(ctx, total) if USE_CALENDAR else {}
+    frac = (w.get(now, 1.0) / sum(w.get(r, 1.0) for r in range(now, total + 1))) if w else 1 / max(left, 1)
     out = {}
     for lot in state["lots"]:
         avail = lot["kg_available"] // BAG * BAG
-        share = avail if left <= 1 else math.ceil(avail / left * PACE / BAG) * BAG
+        share = avail if left <= 1 else math.ceil(avail * frac * PACE / BAG) * BAG
         out[lot["lot_id"]] = min(avail, max(BAG, share)) if avail >= BAG else 0
     return out
 
 
+def spec_failed(memory) -> set:
+    """[T26] คู่ (ล็อต, ประเภทผู้ซื้อ) ที่เคยโดน SPEC_MISMATCH = คุณภาพจริงไม่ผ่าน (ค่าตัวอย่างหลอก) -> เลิกยื่นคู่นี้"""
+    bad = set()
+    if memory is None:
+        return bad
+    for rnd in memory.rounds:
+        types = {s["rfq_id"]: s.get("buyer_type") for s in memory.sent.get(rnd["round_id"], [])}
+        for r in rnd.get("my_offers", []):
+            if r.get("status") == "SPEC_MISMATCH" and types.get(r["rfq_id"]):
+                bad.add((r["lot_id"], types[r["rfq_id"]]))
+    return bad
+
+
 def candidates(state: dict, ctx: Context) -> list[dict]:
     budget = sell_budget(state, ctx)
+    bad = spec_failed(ctx.memory) if SKIP_SPEC_FAILED else set()
     out = []
     for lot in state["lots"]:
         if budget[lot["lot_id"]] < BAG:
             continue
         for rfq in state["rfqs"]:
+            if (lot["lot_id"], rfq["buyer_type"]) in bad:
+                continue                               # เคยไม่ผ่านสเปกจริงกับผู้ซื้อประเภทนี้แล้ว
             if spec_ok(lot["sample"], rfq["spec"]):
                 out.append({"lot_id": lot["lot_id"], "rfq_id": rfq["rfq_id"], "buyer": rfq["buyer"],
                             "buyer_id": rfq.get("buyer_id") or rfq["buyer"],
@@ -199,11 +239,17 @@ def rule_plan(state: dict, ctx: Context, cands: list[dict]) -> list[dict]:
     plan = []
     # กระจาย: ล็อตหนึ่งยื่นได้หลาย RFQ ต่อรอบ (ใบละไม่เกิน budget / SPREAD) ถ้าแพ้ใบหนึ่งยังมีลุ้นอีกใบ
     per_rfq = {l: max(1, math.ceil(b / BAG / SPREAD)) for l, b in budget.items()}
+    step_i: dict = {}                                       # ล็อต × ผู้ซื้อที่ยังไม่รู้จัก -> ใช้ขั้นบันไดถึงขั้นไหนแล้ว
     for c in pool:
         bags = min(budget[c["lot_id"]] // BAG, rfq_left[c["rfq_id"]], per_rfq[c["lot_id"]])
         if bags <= 0:
             continue
         m, known, ceil = price[id(c)]
+        if LADDER_ACROSS and not known and bags == 1:
+            # ใบละ 1 กระสอบ ขั้นบันไดในใบเดียวทำไม่ได้ -> ไล่ขั้นข้ามใบแทน (ใบแรก m, ใบสอง m-0.03, ...)
+            i = step_i.get((c["lot_id"], c["buyer_type"]), 0)
+            step_i[(c["lot_id"], c["buyer_type"])] = i + 1
+            m = max(m + LADDER[i % len(LADDER)], MIN_MARKUP)
         for n, mk in split_bags(bags, m, known, ceil):
             plan.append({"lot_id": c["lot_id"], "rfq_id": c["rfq_id"], "bags": n, "markup": mk})
         budget[c["lot_id"]] -= bags * BAG
