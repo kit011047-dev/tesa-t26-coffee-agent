@@ -73,12 +73,29 @@ LLM_FAIL_LIMIT = 2
 LLM_PAUSE = 2
 
 
+def ab_mode(tag: str) -> str:
+    """[T26] ทดลอง A/B (AB_TEST=1, ตลาดซ้อม): สลับเกมละโหมด hybrid / rules · เกมเดิม (รีสตาร์ท) ใช้โหมดเดิม"""
+    f = LOGS / "ab_modes.json"
+    try:
+        modes = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        modes = {}
+    if tag not in modes:
+        last = list(modes.values())[-1] if modes else "rules"
+        modes[tag] = "rules" if last == "hybrid" else "hybrid"
+        LOGS.mkdir(exist_ok=True)
+        f.write_text(json.dumps(modes, ensure_ascii=False, indent=1), encoding="utf-8")
+    return modes[tag]
+
+
 def play(api: Market, llm: LLM | None, forever: bool) -> None:
     info = api.calendar()
     rules = info["rules"]
     memory, tv, acted, game = None, {}, set(), None
     rng = random.Random()
     llm_fails, llm_pause = 0, 0
+    ab = os.environ.get("AB_TEST") == "1" and llm is not None
+    game_mode = "hybrid"
     while True:
         try:
             state = api.state()
@@ -98,7 +115,9 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
             if mpath.exists() and not state.get("appraisal_submitted"):
                 mpath.rename(mpath.with_name(f"{mpath.stem}.old{int(time.time())}.json"))
             memory = Memory(mpath)
-            log("new_game", market=state["market"], lots=len(state["lots"]), tv=tv)
+            game_mode = ab_mode(tag) if ab and state.get("market") == "sandbox" else "hybrid"
+            log("new_game", market=state["market"], lots=len(state["lots"]), tv=tv,
+                **({"ab_mode": game_mode} if ab else {}))
             dash.start(state.get("team_id", "?"), "T26 ขั้นบันได + เรียนรู้รายผู้ซื้อ", str(api.http.base_url), tv)
         phase = state["phase"]
 
@@ -121,7 +140,9 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
                 log("round_already_sent", round=rid, n=len(state["my_open_offers"]))
                 continue
             use_llm = llm
-            if llm is not None and strategy.LLM_MODE == "hybrid" and llm_pause > 0:
+            if game_mode == "rules":
+                use_llm = None                                  # [T26] A/B: เกมนี้เป็นเกมกฎล้วน
+            elif llm is not None and strategy.LLM_MODE == "hybrid" and llm_pause > 0:
                 use_llm, llm_pause = None, llm_pause - 1          # [T26] พัก LLM รอบนี้ ใช้กฎล้วน
             ctx = strategy.Context(rules, info["calendar"], tv, rng, memory, use_llm, state["seconds_left"] or 999)
             t0 = time.time()
@@ -130,7 +151,9 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
             except Exception as e:                  # noqa: BLE001 — a bug in strategy must not stop the agent
                 log("strategy_crashed", error=repr(e))
                 offers, source = strategy.guard(state, ctx, strategy.rule_plan(state, ctx, strategy.candidates(state, ctx))), "rules"
-            if llm is not None and use_llm is None:
+            if llm is not None and game_mode == "rules":
+                source = "rules (A/B เกมกฎล้วน)"
+            elif llm is not None and use_llm is None:
                 source = "rules (พัก LLM)"
             elif use_llm is not None and strategy.LLM_MODE == "hybrid":
                 llm_fails = llm_fails + 1 if "LLM ไม่ตอบ" in source else 0
@@ -164,6 +187,10 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
                     score = api.call("GET", "/v1/sandbox/reveal").get("score")
                 except Exception:                           # noqa: BLE001
                     pass
+                if score:                                   # [T26] เก็บคะแนนจริงทุกเกมไว้เทียบโหมด
+                    log("sandbox_score", mode=game_mode if ab else ("hybrid" if llm else "rules"),
+                        pr=score.get("pr"), total=score.get("total"), rank=score.get("rank"),
+                        revenue=state["standings"].get("revenue_thb"), score=score)
             dash.end(state["standings"], score)
             if not forever:
                 return
