@@ -118,7 +118,13 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
             log("offers_sent", round=rid, source=source, n=len(sent), kg=sum(o["kg"] for o in sent),
                 seconds=round(time.time() - t0, 1), offers=offers, notes=ctx.notes)
 
-        elif phase == "CLOSED" and game is not None and "closed" not in acted:
+        elif phase == "CLOSED" and game is not None and "closed" not in acted and not acted and not forever:
+            # [T26] เริ่ม agent ตอนตลาดยังปิด (เกมก่อนจบแล้ว / ทีมงานยังไม่กด Start) -> รอเกมใหม่ ไม่จบงานทันที
+            if "waiting" not in acted:
+                log("waiting_for_market", phase=phase)
+            acted.add("waiting")
+
+        elif phase == "CLOSED" and game is not None and "closed" not in acted and acted - {"waiting"}:
             acted.add("closed")
             memory.record_results(state["last_results"])
             log("market_closed", standings=state["standings"])
