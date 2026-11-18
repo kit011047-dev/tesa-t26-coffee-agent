@@ -18,6 +18,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
@@ -69,16 +70,31 @@ def main() -> int:
     if not url or not key or "GATEWAY" in url:
         print("  ❌ .env ยังไม่มี MARKET_URL หรือ TEAM_KEY -> เปิด ~/tesa-starter/.env แล้วใส่ค่า")
         return 1
+    path = urlparse(url).path.strip("/")
+    if path:                                                  # เช่น .../trade หรือ .../v1 -> ตลาดตอบ 404
+        print(f"  ❌ MARKET_URL มีส่วนท้าย '/{path}' ต้องเป็นแค่ http://IP:พอร์ต (ไม่ใส่ /trade หรือ /v1)")
+        return 1
     print(f"  ✅ .env: MARKET_URL={url}  TEAM_KEY=****{key[-4:]}")
     if env.get("USE_LLM", "1") != "1":
         print("  ⚪ โหมด: กฎล้วน (กลยุทธ์ T26 ไม่เรียก LLM)")
     else:
         mode = "LLM ล้วน" if env.get("LLM_MODE") == "llm" else "กฎ + LLM"
         lurl = env.get("LLM_BASE_URL", "")
-        if not lurl or "GATEWAY-ADDRESS" in lurl:
-            print(f"  ❌ โหมด {mode} แต่ยังไม่ได้ใส่ LLM Base URL (ที่อยู่ gateway) -> ใส่ก่อน หรือเปลี่ยนเป็นกฎล้วน")
+        host = (urlparse(lurl).hostname or "").lower()
+        problem = None
+        if not lurl or "GATEWAY-ADDRESS" in lurl or not host:
+            problem = "ยังไม่ได้ใส่ LLM Base URL (ที่อยู่ gateway)"
+        elif host.startswith("sk-") or (key and key.lower()[-8:] in lurl.lower()):
+            problem = "LLM Base URL มี key อยู่ข้างใน (ใส่ key ผิดช่อง) ต้องเป็น http://<IP gateway ที่ทีมงานแจ้ง>:4000/v1"
+        elif host in ("localhost", "127.0.0.1"):
+            problem = "LLM Base URL เป็น localhost = เครื่องตัวเอง ไม่ใช่ gateway ของงาน"
+        if problem and mode == "กฎ + LLM":
+            print(f"  🟡 {problem} -> โหมดกฎ + LLM จะเล่นด้วย agent กฎล้วนทั้งเกม (ไม่ถาม LLM)")
+        elif problem:
+            print(f"  ❌ โหมด {mode}: {problem} -> แก้ก่อน หรือเปลี่ยนเป็นกฎล้วน / กฎ + LLM")
             return 1
-        print(f"  🟡 โหมด: {mode} · gateway {lurl} · model {env.get('LLM_MODEL', 'event-llm')} · timeout {env.get('LLM_TIMEOUT', '60')} วิ"
+        else:
+            print(f"  🟡 โหมด: {mode} · gateway {lurl} · model {env.get('LLM_MODEL', 'event-llm')} · timeout {env.get('LLM_TIMEOUT', '60')} วิ"
               " (ใช้ได้เฉพาะ gateway ของงาน)")
     try:
         r = httpx.get(url.rstrip("/") + "/v1/state", headers={"Authorization": f"Bearer {key}"}, timeout=8)

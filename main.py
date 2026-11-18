@@ -55,11 +55,30 @@ def send_offers(api: Market, offers: list[dict]) -> list[dict]:
     return sent
 
 
+def llm_url_problem(url: str, team_key: str) -> str | None:
+    """[T26] ที่อยู่ gateway ใช้ไม่ได้แน่ๆ -> บอกเหตุผล (None = ดูใช้ได้)"""
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "").lower()
+    if not url or "GATEWAY-ADDRESS" in url or not host:
+        return "ยังไม่ได้ใส่ที่อยู่ gateway"
+    if host.startswith("sk-") or (team_key and team_key.lower()[-8:] in url.lower()):
+        return "ใส่ key ในช่องที่อยู่ gateway"
+    if host in ("localhost", "127.0.0.1"):
+        return "ที่อยู่เป็นเครื่องตัวเอง (localhost) ไม่ใช่ gateway ของงาน"
+    return None
+
+
+# [T26] โหมดกฎ + LLM: LLM ไม่ตอบติดกัน LLM_FAIL_LIMIT รอบ -> พัก LLM_PAUSE รอบ (ใช้กฎล้วน ไม่เสียเวลารอ) แล้วลองใหม่
+LLM_FAIL_LIMIT = 2
+LLM_PAUSE = 2
+
+
 def play(api: Market, llm: LLM | None, forever: bool) -> None:
     info = api.calendar()
     rules = info["rules"]
     memory, tv, acted, game = None, {}, set(), None
     rng = random.Random()
+    llm_fails, llm_pause = 0, 0
     while True:
         try:
             state = api.state()
@@ -101,15 +120,25 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
                 # would replace them (capacity_left_kg no longer counts them, so it would offer less)
                 log("round_already_sent", round=rid, n=len(state["my_open_offers"]))
                 continue
-            ctx = strategy.Context(rules, info["calendar"], tv, rng, memory, llm, state["seconds_left"] or 999)
+            use_llm = llm
+            if llm is not None and strategy.LLM_MODE == "hybrid" and llm_pause > 0:
+                use_llm, llm_pause = None, llm_pause - 1          # [T26] พัก LLM รอบนี้ ใช้กฎล้วน
+            ctx = strategy.Context(rules, info["calendar"], tv, rng, memory, use_llm, state["seconds_left"] or 999)
             t0 = time.time()
             try:
                 offers, source = strategy.decide(state, ctx)
             except Exception as e:                  # noqa: BLE001 — a bug in strategy must not stop the agent
                 log("strategy_crashed", error=repr(e))
                 offers, source = strategy.guard(state, ctx, strategy.rule_plan(state, ctx, strategy.candidates(state, ctx))), "rules"
+            if llm is not None and use_llm is None:
+                source = "rules (พัก LLM)"
+            elif use_llm is not None and strategy.LLM_MODE == "hybrid":
+                llm_fails = llm_fails + 1 if "LLM ไม่ตอบ" in source else 0
+                if llm_fails >= LLM_FAIL_LIMIT:
+                    llm_fails, llm_pause = 0, LLM_PAUSE
+                    log("llm_paused", rounds=LLM_PAUSE, error=llm.last_error)
             dash.decision(state, offers, source, (time.time() - t0) * 1000, strategy.MIN_MARKUP)
-            if llm is not None:
+            if use_llm is not None:
                 dash.llm_round(state, ctx.llm_info, source, offers, llm)
             t1 = time.time()
             sent = send_offers(api, offers) if offers else []
@@ -161,6 +190,11 @@ def main() -> None:
         strategy.LLM_HISTORY = int(os.environ.get("LLM_HISTORY", "3"))
         extra = HERE / "llm_prompt_extra.txt"                      # คำสั่งเพิ่มเติมถึง LLM (แก้ได้จาก dashboard)
         strategy.EXTRA_PROMPT = extra.read_text(encoding="utf-8") if extra.exists() else ""
+        problem = llm_url_problem(os.environ.get("LLM_BASE_URL", ""), os.environ["TEAM_KEY"])
+        if problem and strategy.LLM_MODE == "hybrid":
+            # [T26] กฎ + LLM แต่ที่อยู่ gateway ใช้ไม่ได้ -> ใช้ agent กฎล้วนทั้งเกม ไม่ต้องลองต่อ LLM ทุกรอบ
+            log("llm_disabled", reason=problem, mode="rules")
+            llm = None
     play(api, llm, "--forever" in sys.argv)
 
 
