@@ -1,7 +1,7 @@
-"""[T26] dashboard_bridge.py: ส่งความคิดของ agent ไปแสดงบน dashboard 7 ขั้นของทีม (~/tesa-market/part9)
+"""[T26] dashboard_bridge.py: ส่งความคิดของ agent ไปแสดงบน dashboard 7 ขั้นของทีม (dashboard/)
 
 main.py เรียกฟังก์ชันในไฟล์นี้ทีละขั้น แต่ละขั้นเขียน 1 บรรทัด JSON ลง events.jsonl
-หน้าเว็บ dashboard (python -m part9.dashboard ใน ~/tesa-market) อ่านไฟล์นี้แล้วแสดงสด
+หน้าเว็บ dashboard (.venv/bin/python -m dashboard.dashboard ใน ~/tesa-starter) อ่านไฟล์นี้แล้วแสดงสด
 
     perception     รับรู้     : ล็อตของเรา + RFQ ของผู้ซื้อรอบนี้
     understanding  เข้าใจ     : TV ของแต่ละล็อต + ขายให้ผู้ซื้อรายไหนได้ / ไม่ได้เพราะอะไร
@@ -88,7 +88,7 @@ def _buyers(state: dict) -> dict:
 def start(team: str, strategy_name: str, base_url: str, tv: dict) -> None:
     """เริ่มเกมใหม่ = ล้างไฟล์ events เดิม"""
     global _path, _seq, _run, _tv
-    _path = Path(os.path.expanduser(os.environ.get("DASHBOARD_EVENTS", "~/tesa-market/part9/live/events.jsonl")))
+    _path = Path(os.path.expanduser(os.environ.get("DASHBOARD_EVENTS", str(Path(__file__).parent / "dashboard" / "live" / "events.jsonl"))))
     _path.parent.mkdir(parents=True, exist_ok=True)
     _path.write_text("", encoding="utf-8")
     _seq, _run, _tv = 0, time.strftime("%Y%m%d_%H%M%S"), dict(tv)

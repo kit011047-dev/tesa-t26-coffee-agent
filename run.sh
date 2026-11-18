@@ -10,7 +10,7 @@
 # กด Ctrl+C เพื่อหยุดทั้งหมด
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-DASH_DIR="$HOME/tesa-market"
+DASH_DIR="$HERE"                                # [T26] dashboard อยู่ใน tesa-starter/dashboard
 PY="$HERE/.venv/bin/python"
 cd "$HERE" || exit 1
 
@@ -32,7 +32,7 @@ mkdir -p "$HERE/logs"
 # 2) dashboard (ถ้ายังไม่เปิด)
 if ! lsof -iTCP:8050 -sTCP:LISTEN -n -P >/dev/null 2>&1; then
   DPY="$DASH_DIR/.venv/bin/python"; [ -x "$DPY" ] || DPY="python3"
-  (cd "$DASH_DIR" && nohup "$DPY" -m part9.dashboard --no-open > /tmp/t26-dashboard.log 2>&1 &)
+  (cd "$DASH_DIR" && nohup "$DPY" -m dashboard.dashboard --no-open > /tmp/t26-dashboard.log 2>&1 &)
   sleep 1
   echo "📊 เปิด dashboard แล้ว: http://127.0.0.1:8050"
 else

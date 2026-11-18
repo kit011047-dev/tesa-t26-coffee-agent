@@ -13,7 +13,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 OUT = HERE / "handin.zip"
-SKIP_DIRS = {".venv", "venv", "__pycache__", ".git", ".ipynb_checkpoints", "node_modules", "site-packages"}
+SKIP_DIRS = {".venv", "venv", "__pycache__", ".git", ".ipynb_checkpoints", "node_modules", "site-packages", "live"}   # [T26] live = ไฟล์ชั่วคราวของ dashboard
 ENV_OK = {".env.example", ".env.sample", ".env.template"}
 MAX_FILE = 5 * 1024 * 1024     # per file, except under logs/: the reviewers need the whole log
 MAX_ZIP = 20 * 1024 * 1024      # the market's hand-in limit

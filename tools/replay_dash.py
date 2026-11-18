@@ -30,4 +30,4 @@ for res in full.rounds:
     prev = res; time.sleep(delay)
 mem.rounds.append(prev); dash.learning(prev, mem)
 dash.end({"revenue_thb": 108840.6}, {"total": 100.0, "pr": 0.9871, "rank": 1})
-print("events:", sum(1 for _ in open(os.path.expanduser("~/tesa-market/part9/live/events.jsonl"))))
+print("events:", sum(1 for _ in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dashboard", "live", "events.jsonl"))))
