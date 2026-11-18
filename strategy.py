@@ -44,6 +44,7 @@ USE_CALENDAR = False                  # ใช้ demand_weight จากปฏ�
 LLM_HISTORY = 3                       # ส่งผลย้อนหลังให้ LLM กี่รอบ (main.py ตั้งจาก .env LLM_HISTORY)
 EXTRA_PROMPT = ""                     # คำสั่งเพิ่มเติมถึง LLM (main.py อ่านจาก llm_prompt_extra.txt)
 LLM_MODE = "hybrid"                   # main.py ตั้งจาก .env: "hybrid" = กฎ+LLM ประสาน (กฎทำแผน LLM ปรับ ±0.03) | "llm" = LLM ล้วน
+RFQ_BALANCE = True                    # กระจายล็อตไปคนละใบ RFQ (กันหลายล็อตรุมใบเดียวแล้วแย่งกันเอง)
 RAISE_STRICT = False                 # True = ขายได้แต่มีซองแพ้ที่ราคาเท่ากัน -> ไม่ขยับขึ้น
 SOLD = ("ACCEPTED", "PARTIAL")
 
@@ -245,6 +246,25 @@ def rule_plan(state: dict, ctx: Context, cands: list[dict]) -> list[dict]:
     # กระจาย: ล็อตหนึ่งยื่นได้หลาย RFQ ต่อรอบ (ใบละไม่เกิน budget / SPREAD) ถ้าแพ้ใบหนึ่งยังมีลุ้นอีกใบ
     per_rfq = {l: max(1, math.ceil(b / BAG / SPREAD)) for l, b in budget.items()}
     step_i: dict = {}                                       # ล็อต × ผู้ซื้อที่ยังไม่รู้จัก -> ใช้ขั้นบันไดถึงขั้นไหนแล้ว
+    if RFQ_BALANCE:
+        # [T26] กระจายล็อตไปคนละใบ: แต่ละล็อตเลือกผู้ซื้อที่จ่ายดีก่อน แล้วในผู้ซื้อเดียวกัน
+        # เลือกใบที่เรายังยื่นน้อยก่อน (ไม่ให้หลายล็อตรุมใบเดียวแล้วแย่งช่องกันเอง)
+        used: dict = {}
+        by_lot: dict = {}
+        for c in pool:
+            by_lot.setdefault(c["lot_id"], []).append(c)
+        ordered = []
+        for lot_cs in by_lot.values():                       # ล็อตเรียง TV สูงก่อนตาม pool
+            for c in sorted(lot_cs, key=lambda c: (-round(price[id(c)][0], 3), used.get(c["rfq_id"], 0))):
+                ordered.append(c)
+                if min(budget[c["lot_id"]] // BAG, rfq_left[c["rfq_id"]], per_rfq[c["lot_id"]]) > 0:
+                    used[c["rfq_id"]] = used.get(c["rfq_id"], 0) + 1
+                    budget_sim = min(budget[c["lot_id"]] // BAG, rfq_left[c["rfq_id"]], per_rfq[c["lot_id"]])
+                    budget[c["lot_id"]] -= budget_sim * BAG            # จองชั่วคราวเพื่อจัดลำดับ แล้วคืนด้านล่าง
+                    rfq_left[c["rfq_id"]] -= budget_sim
+        budget = sell_budget(state, ctx)                     # คืนค่าเดิม แล้ววนจริงตามลำดับใหม่
+        rfq_left = {r["rfq_id"]: r["bags"] for r in state["rfqs"]}
+        pool = ordered
     for c in pool:
         bags = min(budget[c["lot_id"]] // BAG, rfq_left[c["rfq_id"]], per_rfq[c["lot_id"]])
         if bags <= 0:
