@@ -48,6 +48,8 @@ def make_game(rng: random.Random, harsh: float | None = None):
 
 NOISE = 0.0  # ค่าจริงต่างจากค่าตัวอย่าง (sd ของ % เมล็ดเสีย และ % ความชื้น) ผู้ซื้อตรวจสเปกกับค่าจริง
 CAL = None   # น้ำหนักความต้องการซื้อต่อรอบ เช่น [1,1,1,1.6,1.6,1] (None = ปกติทุกรอบ)
+ROUNDS = 6   # จำนวนรอบ (วันที่ 18: 8 รอบ)
+LLM_OBJ = None  # ใส่ LLM ปลอมเพื่อทดสอบโหมด กฎ + LLM
 CAP = None   # None = ไม่จำกัด, ตัวเลข = capacity ต่อรอบ (เท่าของส่วนแบ่งเฉลี่ยต่อรอบ) เช่น 1.4
 VIOLATIONS = []
 
@@ -61,10 +63,10 @@ def play(seed: int, harsh: float | None = None) -> float:
     cal = [{"rounds": f"{i+1}-{i+1}", "label": "x", "demand_weight": w} for i, w in enumerate(CAL)] if CAL else []
     left = {l: kg for l, kg, _, _ in lots}
     mem, rev = Mem(), 0.0
-    rules = {"timeline": {"rounds": 6}}
+    rules = {"timeline": {"rounds": ROUNDS}}
     total_bags = sum(kg for _, kg, _, _ in lots) // BAG
-    cap_kg = None if CAP is None else math.ceil(total_bags / 6 * CAP) * BAG
-    for rn in range(1, 7):
+    cap_kg = None if CAP is None else math.ceil(total_bags / ROUNDS * CAP) * BAG
+    for rn in range(1, ROUNDS + 1):
         rfqs = []
         k = 0
         for b, t in BUYERS:
@@ -73,10 +75,10 @@ def play(seed: int, harsh: float | None = None) -> float:
                 bags = max(1, round(rng.randint(4, 15) * (CAL[rn - 1] if CAL else 1)))
                 rfqs.append(dict(rfq_id=f"R{rn}-{k:02d}", buyer=b, buyer_id=b, buyer_type=t, kg=bags * BAG, bags=bags,
                                  spec=C_SPEC if t == "COMMERCIAL" else I_SPEC))
-        state = dict(round=dict(round_id=f"R{rn}", kind="real", number=rn, of=6, calendar="ปกติ"), rfqs=rfqs,
+        state = dict(round=dict(round_id=f"R{rn}", kind="real", number=rn, of=ROUNDS, calendar="ปกติ"), rfqs=rfqs,
                      lots=[dict(lot_id=l, kg_available=left[l], kg_remaining=left[l], sample=s) for l, _, s, _ in lots],
                      capacity_left_kg=cap_kg)
-        ctx = strategy.Context(rules, cal, tv, random.Random(seed * 7 + rn), mem, None, 60)
+        ctx = strategy.Context(rules, cal, tv, random.Random(seed * 7 + rn), mem, LLM_OBJ, 60)
         offers, _ = strategy.decide(state, ctx)
         rmap = {r["rfq_id"]: r for r in rfqs}
         if cap_kg is not None and sum(o["kg"] for o in offers) > cap_kg:
@@ -120,9 +122,9 @@ def play(seed: int, harsh: float | None = None) -> float:
     return (rev + sum(0.8 * tv[l] * kg for l, kg in left.items())) / total
 
 
-def evaluate(cfg: dict, seeds=range(300), harsh=None, cap=None, noise=0.0, cal=None) -> float:
-    global CAP, NOISE, CAL
-    CAP, NOISE, CAL = cap, noise, cal
+def evaluate(cfg: dict, seeds=range(300), harsh=None, cap=None, noise=0.0, cal=None, rounds=6) -> float:
+    global CAP, NOISE, CAL, ROUNDS
+    CAP, NOISE, CAL, ROUNDS = cap, noise, cal, rounds
     importlib.reload(strategy)
     for k, v in cfg.items():
         setattr(strategy, k, v)

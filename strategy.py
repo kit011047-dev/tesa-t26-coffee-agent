@@ -43,7 +43,7 @@ SKIP_SPEC_FAILED = True               # เคยโดน SPEC_MISMATCH กั�
 USE_CALENDAR = False                  # ใช้ demand_weight จากปฏิทินตลาด แบ่งขายมากในรอบที่ต้องการซื้อสูง
 LLM_HISTORY = 3                       # ส่งผลย้อนหลังให้ LLM กี่รอบ (main.py ตั้งจาก .env LLM_HISTORY)
 EXTRA_PROMPT = ""                     # คำสั่งเพิ่มเติมถึง LLM (main.py อ่านจาก llm_prompt_extra.txt)
-LLM_MODE = "hybrid"                   # main.py ตั้งจาก .env: "hybrid" = กฎ+LLM (กฎเติมส่วนที่ขาด) | "llm" = LLM ล้วน
+LLM_MODE = "hybrid"                   # main.py ตั้งจาก .env: "hybrid" = กฎ+LLM ประสาน (กฎทำแผน LLM ปรับ ±0.03) | "llm" = LLM ล้วน
 RAISE_STRICT = False                 # True = ขายได้แต่มีซองแพ้ที่ราคาเท่ากัน -> ไม่ขยับขึ้น
 SOLD = ("ACCEPTED", "PARTIAL")
 
@@ -370,11 +370,147 @@ def guard(state: dict, ctx: Context, plan: list[dict]) -> list[dict]:
     return offers
 
 
+# ===================== [T26] กฎ + LLM แบบประสาน: กฎคุมโครง · LLM ปรับละเอียด =====================
+COORD_MAX = 0.02                      # LLM ปรับตัวคูณของผู้ซื้อแต่ละรายได้ไม่เกิน ±เท่านี้จากที่กฎเสนอ
+COORD_DRIFT = 0.02                    # กดลงได้ไม่ต่ำกว่า (ราคาสูงสุดที่ผู้ซื้อรายนั้นเคยจ่าย − เท่านี้) · None = ไม่กัน
+
+COORD_SYSTEM = """You are the pricing advisor of a coffee farm's sales agent in a sealed-offer market.
+Tested rules already built this round's plan: which lot goes to which buyer, how many 60 kg bags, and a
+markup per buyer (price = markup x true value). Your job is ONLY to fine-tune each buyer's markup by a
+delta between -{m} and +{m} (0 = keep the rule). You cannot change lots, buyers or bags.
+
+How buyers decide: they drop offers above their hidden ceiling (ABOVE_LIMIT), sort the rest by
+price/value (cheapest first) and buy until full; the rest are OUTBID. Unsold beans are worth only 0.80 at the end.
+Use what the rules do not look at:
+- market: if a buyer bought less than it wanted last round, competition there is weak -> you may raise a little.
+- market: many offers and a full buy -> strong competition -> lower a little if we lost there.
+- our results per buyer: repeated OUTBID -> lower; ABOVE_LIMIT -> never go up for that buyer.
+- few rounds left with many bags left -> lower a little to sell; nothing left to sell -> no change needed.
+Small or zero deltas are usually right. Answer only JSON matching the schema; keep reason short."""
+
+COORD_SCHEMA = {"type": "object", "required": ["adjust", "reason"], "properties": {
+    "adjust": {"type": "array", "items": {"type": "object", "required": ["buyer_id", "delta"], "properties": {
+        "buyer_id": {"type": "string"}, "delta": {"type": "number"}}}},
+    "reason": {"type": "string", "maxLength": 300}}}
+
+
+def _buyer_history(memory, last: int) -> dict:
+    """ผลของเราต่อผู้ซื้อแต่ละรายใน n รอบล่าสุด: buyer_id -> ["R3 x1.00 ACCEPTED", ...]"""
+    out: dict = {}
+    if memory is None:
+        return out
+    for rnd in memory.rounds[-last:]:
+        sent = {(s["rfq_id"], s["lot_id"]): s for s in memory.sent.get(rnd["round_id"], [])}
+        for r in rnd.get("my_offers", []):
+            s = sent.get((r["rfq_id"], r["lot_id"]))
+            if s and s.get("buyer_id"):
+                out.setdefault(s["buyer_id"], []).append(f"{rnd['round_id']} x{s.get('markup', '?')} {r['status']}")
+    return out
+
+
+def _market_by_buyer(state: dict, memory) -> dict:
+    """ภาพรวมตลาดรอบล่าสุดต่อผู้ซื้อ (ทุกทีม): ต้องการ / ซื้อได้ / กี่ซอง / ราคาเฉลี่ย"""
+    if memory is None or not memory.rounds:
+        return {}
+    name2id = {r["buyer"]: r.get("buyer_id") or r["buyer"] for r in state.get("rfqs", [])}
+    out: dict = {}
+    for m in memory.rounds[-1].get("market_summary", []):
+        bid = name2id.get(m["buyer"], m["buyer"])
+        a = out.setdefault(bid, {"wanted_bags": 0, "bought_bags": 0, "offers": 0, "avg_prices": []})
+        a["wanted_bags"] += m["wanted_kg"] // BAG
+        a["bought_bags"] += m["bought_kg"] // BAG
+        a["offers"] += m["offers"]
+        if m.get("price_avg") is not None:
+            a["avg_prices"].append(m["price_avg"])
+    return out
+
+
+def llm_coordinate(state: dict, ctx: Context, plan: list[dict]) -> tuple[list[dict], int]:
+    """ให้ LLM ปรับตัวคูณรายผู้ซื้อจากแผนของกฎ (±COORD_MAX) · ล้ม/ไม่ทัน -> คืนแผนของกฎเดิม"""
+    rfq_b = {r["rfq_id"]: (r.get("buyer_id") or r["buyer"], r["buyer_type"]) for r in state["rfqs"]}
+    learned = learn(ctx.memory, ctx.tv)
+    buyers: dict = {}
+    for p in plan:
+        bid, typ = rfq_b[p["rfq_id"]]
+        b = buyers.setdefault(bid, {"buyer_id": bid, "type": typ, "rule_markups": set(), "bags": 0})
+        b["rule_markups"].add(round(p["markup"], 3))
+        b["bags"] += p["bags"]
+    if not buyers:
+        return plan, 0
+    time_for_llm = ctx.seconds_left - 5
+    if time_for_llm < 3:
+        ctx.notes.append("no time for the LLM this round")
+        return plan, 0
+    hist, mkt = _buyer_history(ctx.memory, LLM_HISTORY), _market_by_buyer(state, ctx.memory)
+    rows = []
+    for bid, b in buyers.items():
+        k = learned.get(bid) or {}
+        rows.append({"buyer_id": bid, "type": b["type"], "bags_planned": b["bags"],
+                     "rule_markups": sorted(b["rule_markups"]),
+                     "known_ceiling": k.get("ceil") if k.get("ceil", 9) < 9 else None,
+                     "best_sold": round(k["best"], 3) if k.get("best") else None,
+                     "our_recent": hist.get(bid, []),
+                     "market_last_round": {kk: (round(sum(v) / len(v), 1) if kk == "avg_prices" and v else v)
+                                           for kk, v in mkt.get(bid, {}).items()} or None})
+    bags_left = sum(l["kg_available"] for l in state["lots"]) // BAG
+    user = "\n".join([
+        f"Round {state['round']['round_id']}, rounds left: {rounds_left(state, ctx)}, our sellable bags left: {bags_left}.",
+        f"Rule plan per buyer (fine-tune each with a delta in [-{COORD_MAX:.2f}, {COORD_MAX:.2f}]):",
+        json.dumps(rows, ensure_ascii=False, default=list)])
+    system = COORD_SYSTEM.replace("{m}", f"{COORD_MAX:.2f}") + (("\n\nExtra instructions from the team:\n" + EXTRA_PROMPT) if EXTRA_PROMPT.strip() else "")
+    t_ask = time.time()
+    answer = ctx.llm.ask_json(system, user, COORD_SCHEMA, timeout=time_for_llm)
+    ctx.llm_info = {"mode": "hybrid", "seconds": round(time.time() - t_ask, 2), "timeout": round(time_for_llm, 1),
+                    "system": system, "user": user, "raw": getattr(ctx.llm, "last_text", None),
+                    "usage": getattr(ctx.llm, "last_usage", None), "error": ctx.llm.last_error,
+                    "n_candidates": len(buyers), "target_bags": sum(b["bags"] for b in buyers.values()),
+                    "ok": False, "offers": []}
+    if answer is None or not isinstance(answer.get("adjust"), list):
+        ctx.notes.append(f"llm failed: {ctx.llm.last_error}")
+        return plan, 0
+    ctx.llm_info.update(ok=True, reason=str(answer.get("reason"))[:300])
+    delta: dict = {}
+    for a in answer["adjust"]:
+        try:
+            if str(a["buyer_id"]) in buyers:
+                delta[str(a["buyer_id"])] = max(-COORD_MAX, min(COORD_MAX, float(a["delta"])))
+        except (KeyError, TypeError, ValueError):
+            ctx.notes.append(f"llm bad adjust ignored: {a}")
+    out, changed = [], 0
+    for p in plan:
+        bid, typ = rfq_b[p["rfq_id"]]
+        d = delta.get(bid, 0.0)
+        ceil = (learned.get(bid) or {}).get("ceil", 9.0)
+        m = p["markup"] + d
+        if d > 0:
+            m = min(m, ceil - 0.01)                      # ห้ามดันขึ้นชนเพดานที่รู้แล้ว
+        best = (learned.get(bid) or {}).get("best")
+        if d < 0 and best and COORD_DRIFT is not None:
+            # กันราคาไหลลงสะสม: กฎเรียนรู้จากราคาที่ยื่นจริง ถ้า LLM กดลงทุกรอบ ราคาจะลดต่อเนื่อง
+            # -> ไม่ให้ต่ำกว่าราคาที่ผู้ซื้อรายนี้เคยจ่ายสูงสุด − COORD_DRIFT
+            m = max(m, min(p["markup"], best - COORD_DRIFT))
+        m = round(min(max(m, MIN_MARKUP), MAX_MARKUP), 3)
+        changed += abs(m - p["markup"]) > 1e-9
+        out.append({**p, "markup": m})
+        ctx.llm_info["offers"].append({"lot_id": p["lot_id"], "rfq_id": p["rfq_id"], "buyer_id": bid, "buyer_type": typ,
+                                       "bags": p["bags"], "markup": m, "rule_markup": p["markup"]})
+    ctx.notes.append(f"llm reason: {str(answer.get('reason'))[:200]}")
+    return out, changed
+
+
 def decide(state: dict, ctx: Context) -> tuple[list[dict], str]:
     """Returns (offers, source) where source is "llm" or "rules"."""
     cands = candidates(state, ctx)
     if not cands:
         return [], "none"
+    if ctx.llm and LLM_MODE == "hybrid":
+        # [T26] กฎ + LLM แบบประสาน: กฎทำแผนทั้งหมด แล้ว LLM ปรับตัวคูณรายผู้ซื้อ ±0.03
+        plan = rule_plan(state, ctx, cands)
+        n_before = len(ctx.notes)
+        adjusted, changed = llm_coordinate(state, ctx, plan)
+        if any(n.startswith("llm failed") or n.startswith("no time") for n in ctx.notes[n_before:]):
+            return guard(state, ctx, plan), "rules (LLM ไม่ตอบ)"
+        return guard(state, ctx, adjusted), f"rules+llm (ปรับ {changed} ซอง)"
     plan = llm_plan(state, ctx, cands) if ctx.llm else None
     if plan and LLM_MODE == "llm":
         # [T26] LLM ล้วน: ใช้แผนของ LLM อย่างเดียว ไม่เติมด้วยกฎ (guard ยังตรวจทุกซองเพื่อให้ถูกกติกา)
