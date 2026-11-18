@@ -109,6 +109,8 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
                 log("strategy_crashed", error=repr(e))
                 offers, source = strategy.guard(state, ctx, strategy.rule_plan(state, ctx, strategy.candidates(state, ctx))), "rules"
             dash.decision(state, offers, source, (time.time() - t0) * 1000, strategy.MIN_MARKUP)
+            if llm is not None:
+                dash.llm_round(state, ctx.llm_info, source, offers, llm)
             t1 = time.time()
             sent = send_offers(api, offers) if offers else []
             dash.action(state, len(offers), len(sent), (time.time() - t1) * 1000)
@@ -147,7 +149,12 @@ def main() -> None:
         if not key or "change-me" in key:              # gateway ใช้ key เดียวกับตลาด (คู่มือ)
             key = os.environ["TEAM_KEY"]
         llm = LLM(os.environ["LLM_BASE_URL"], os.environ["LLM_MODEL"], key,
-                  timeout=float(os.environ.get("LLM_TIMEOUT", "60")), thinking=os.environ.get("LLM_THINKING") == "1")
+                  timeout=float(os.environ.get("LLM_TIMEOUT", "60")), thinking=os.environ.get("LLM_THINKING") == "1",
+                  max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "1500")),
+                  temperature=float(os.environ.get("LLM_TEMPERATURE", "0.7")))
+        strategy.LLM_HISTORY = int(os.environ.get("LLM_HISTORY", "3"))
+        extra = HERE / "llm_prompt_extra.txt"                      # คำสั่งเพิ่มเติมถึง LLM (แก้ได้จาก dashboard)
+        strategy.EXTRA_PROMPT = extra.read_text(encoding="utf-8") if extra.exists() else ""
     play(api, llm, "--forever" in sys.argv)
 
 

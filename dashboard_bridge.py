@@ -196,6 +196,34 @@ def learning(results: dict | None, memory, round_no=None) -> None:
 
 
 @_safe
+def llm_round(state: dict, info: dict, source: str, offers: list[dict], llm) -> None:
+    """[T26] สิ่งที่ LLM เห็นและตอบในรอบนี้ ไว้ปรับจูนค่า LLM"""
+    import strategy
+    info = info or {}
+    final = {(o["rfq_id"], o["lot_id"], round(o["price_per_kg"], 2)) for o in offers}
+    rows, used = [], 0
+    for o in info.get("offers", []):
+        tv = _tv.get(o["lot_id"], 0)
+        m = min(max(o["markup"], strategy.MIN_MARKUP), strategy.MAX_MARKUP)
+        hit = (o["rfq_id"], o["lot_id"], round(m * tv, 2)) in final
+        used += hit
+        rows.append({**o, "markup_clamped": round(m, 3), "used": hit,
+                     "diff": round(o["markup"] - o["rule_markup"], 3) if o.get("rule_markup") else None})
+    _write("llm", _rnum(state), {
+        "mode": info.get("mode", strategy.LLM_MODE), "source": source, "ok": info.get("ok", False),
+        "skipped": not info, "seconds": info.get("seconds"), "timeout": info.get("timeout"),
+        "usage": info.get("usage"), "error": info.get("error"), "reason": info.get("reason"),
+        "n_candidates": info.get("n_candidates"), "target_bags": info.get("target_bags"),
+        "offers": rows, "used": used, "n_final": len(offers),
+        "settings": {"model": getattr(llm, "model", None),
+                     "temperature": getattr(llm, "temperature", None), "max_tokens": getattr(llm, "max_tokens", None),
+                     "thinking": getattr(llm, "thinking", None), "history": strategy.LLM_HISTORY,
+                     "extra_prompt": bool(strategy.EXTRA_PROMPT.strip())},
+        "system": (info.get("system") or "")[-3000:], "user": (info.get("user") or "")[:6000],
+        "raw": info.get("raw")})
+
+
+@_safe
 def end(standings: dict, score: dict | None = None) -> None:
     sc = {"revenue": standings.get("revenue_thb")}
     if score:

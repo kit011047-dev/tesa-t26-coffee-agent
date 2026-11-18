@@ -66,7 +66,13 @@ def main() -> int:
         return 1
 
     # 2) ตอบ JSON ได้ไหม + ใช้เวลาเท่าไร
-    llm = LLM(base, model, key, timeout=60)
+    llm = LLM(base, model, key, timeout=float(env.get("LLM_TIMEOUT", "60")), thinking=env.get("LLM_THINKING") == "1",
+              max_tokens=int(env.get("LLM_MAX_TOKENS", "1500")), temperature=float(env.get("LLM_TEMPERATURE", "0.7")))
+    strategy.LLM_HISTORY = int(env.get("LLM_HISTORY", "3"))
+    extra = HERE / "llm_prompt_extra.txt"
+    strategy.EXTRA_PROMPT = extra.read_text(encoding="utf-8") if extra.exists() else ""
+    print(f"   ค่าที่ใช้: temperature {llm.temperature} · max_tokens {llm.max_tokens} · thinking {llm.thinking}"
+          f" · ผลย้อนหลัง {strategy.LLM_HISTORY} รอบ · คำสั่งเพิ่มเติม {'มี' if strategy.EXTRA_PROMPT.strip() else 'ไม่มี'}")
     schema = {"type": "object", "required": ["markup", "reason"],
               "properties": {"markup": {"type": "number"}, "reason": {"type": "string", "maxLength": 200}}}
     print("=== 2) ทดสอบคำถามสั้น (ตอบเป็น JSON)")
@@ -98,7 +104,9 @@ def main() -> int:
     sec = time.time() - t0
     rp = strategy.rule_plan(st, strategy.Context(cal["rules"], cal["calendar"], tv, random.Random(1), mem), cands)
     show = lambda plan: [f"{p['lot_id'][-1]}→{p['rfq_id']} {p['bags']}กส. x{p['markup']:.3f}" for p in plan]  # noqa: E731
-    print(f"   LLM ({sec:.1f} วินาที): {show(lp) if lp else '❌ ไม่ได้คำตอบ -> agent จะใช้กฎแทน'}")
+    print(f"   LLM ({sec:.1f} วินาที, token {ctx.llm_info.get('usage')}): {show(lp) if lp else '❌ ไม่ได้คำตอบ -> agent จะใช้กฎแทน'}")
+    for o in ctx.llm_info.get("offers", []):
+        print(f"     {o['lot_id'][-1]}→{o['buyer_id']} LLM ×{o['markup']:.3f} กฎ ×{o['rule_markup'] or 0:.3f}")
     for n in ctx.notes:
         if n.startswith("llm"):
             print(f"   {n}")

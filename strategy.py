@@ -11,6 +11,7 @@ price_per_kg = markup × our TV estimate. A markup of 1.00 asks exactly what we 
 import json
 import math
 import random
+import time
 from dataclasses import dataclass, field
 
 BAG = 60
@@ -40,6 +41,8 @@ CAP_PRESSURE = 0.02                   # capacity ไม่พอขายหม�
 LADDER_ACROSS = False                 # ใบละ 1 กระสอบ + ยังไม่รู้จักผู้ซื้อ -> ไล่ขั้นบันไดข้ามใบ
 SKIP_SPEC_FAILED = True               # เคยโดน SPEC_MISMATCH กับประเภทผู้ซื้อไหน -> เลิกยื่นคู่นั้น (และปล่อยไปขาย Instant ได้ทันที)
 USE_CALENDAR = False                  # ใช้ demand_weight จากปฏิทินตลาด แบ่งขายมากในรอบที่ต้องการซื้อสูง
+LLM_HISTORY = 3                       # ส่งผลย้อนหลังให้ LLM กี่รอบ (main.py ตั้งจาก .env LLM_HISTORY)
+EXTRA_PROMPT = ""                     # คำสั่งเพิ่มเติมถึง LLM (main.py อ่านจาก llm_prompt_extra.txt)
 LLM_MODE = "hybrid"                   # main.py ตั้งจาก .env: "hybrid" = กฎ+LLM (กฎเติมส่วนที่ขาด) | "llm" = LLM ล้วน
 RAISE_STRICT = False                 # True = ขายได้แต่มีซองแพ้ที่ราคาเท่ากัน -> ไม่ขยับขึ้น
 SOLD = ("ACCEPTED", "PARTIAL")
@@ -55,6 +58,7 @@ class Context:
     llm: object = None
     seconds_left: float = 999         # time left in this round when the state was read
     notes: list = field(default_factory=list)
+    llm_info: dict = field(default_factory=dict)   # [T26] สิ่งที่ LLM เห็น/ตอบรอบนี้ (ไว้แสดงบน dashboard)
 
 
 def spec_ok(sample: dict, spec: dict) -> bool:
@@ -290,13 +294,16 @@ def llm_plan(state: dict, ctx: Context, cands: list[dict]) -> list[dict] | None:
     table = [{"candidate": i, **{k: c[k] for k in ("lot_id", "buyer", "buyer_type", "rfq_bags", "max_bags", "tv")}}
              for i, c in enumerate(cands)]
     if LLM_MODE == "llm":
-        # [T26] LLM ล้วน: ไม่บอกคำตอบของกฎ ให้ LLM คิดเองจากผลที่ผ่านมา
+        # [T26] LLM ล้วน: ไม่บอกคำตอบของกฎ ให้ LLM คิดเองจากผลที่ผ่านมา (เก็บค่าของกฎไว้เทียบบน dashboard เท่านั้น)
         hint = "Choose markups yourself from the recent results (ceilings are hidden; learn them)."
+        _learned, _rl = learn(ctx.memory, ctx.tv), rounds_left(state, ctx)
+        hidden_rule = [round(markup_for(c, _learned, _rl)[0], 3) for c in cands]
     else:
         # [T26] กฎ + LLM: แนบตัวคูณที่กฎ T26 คำนวณจากผลจริงของผู้ซื้อแต่ละราย ให้ LLM เห็นด้วยหรือปรับพร้อมเหตุผล
         learned, rl = learn(ctx.memory, ctx.tv), rounds_left(state, ctx)
         for row, c in zip(table, cands):
             row["rule_markup"] = round(markup_for(c, learned, rl)[0], 3)
+        hidden_rule = None
         hint = ("Each candidate has rule_markup: what our tested rules suggest for that buyer, learned from real results "
                 "(raise after sales, lower after OUTBID/ABOVE_LIMIT). Use it unless you have a clear reason; "
                 "never go above a markup that buyer rejected as ABOVE_LIMIT.")
@@ -305,20 +312,31 @@ def llm_plan(state: dict, ctx: Context, cands: list[dict]) -> list[dict] | None:
         f"You may offer at most {state['capacity_left_kg'] // BAG if state['capacity_left_kg'] is not None else 'any'} bags in total this round.",
         f"Plan to offer about {target} bags in total this round: unsold beans lose 20% of their value at the end.",
         hint,
-        "Recent results:", ctx.memory.summary() if ctx.memory else "none",
+        "Recent results:", ctx.memory.summary(last=LLM_HISTORY) if ctx.memory else "none",
         "Candidates (lot x RFQ, already spec-checked):", json.dumps(table, ensure_ascii=False),
         "Pick offers. Use each candidate at most once; bags <= max_bags.",
     ])
     # TODO: give the LLM more to reason about — buyer personas' habits, the calendar ahead, price trends
-    answer = ctx.llm.ask_json(SYSTEM, user, SCHEMA, timeout=time_for_llm)
+    system = SYSTEM + (("\n\nExtra instructions from the team:\n" + EXTRA_PROMPT) if EXTRA_PROMPT.strip() else "")
+    t_ask = time.time()
+    answer = ctx.llm.ask_json(system, user, SCHEMA, timeout=time_for_llm)
+    ctx.llm_info = {"mode": LLM_MODE, "seconds": round(time.time() - t_ask, 2), "timeout": round(time_for_llm, 1),
+                    "system": system, "user": user, "raw": getattr(ctx.llm, "last_text", None),
+                    "usage": getattr(ctx.llm, "last_usage", None), "error": ctx.llm.last_error,
+                    "n_candidates": len(cands), "target_bags": target, "ok": False, "offers": []}
     if answer is None or not isinstance(answer.get("offers"), list):
         ctx.notes.append(f"llm failed: {ctx.llm.last_error}")
         return None
+    ctx.llm_info.update(ok=True, reason=str(answer.get("reason"))[:300])
     plan = []
     for o in answer["offers"]:
         try:
             c = cands[int(o["candidate"])]
             plan.append({"lot_id": c["lot_id"], "rfq_id": c["rfq_id"], "bags": int(o["bags"]), "markup": float(o["markup"])})
+            ctx.llm_info["offers"].append({"lot_id": c["lot_id"], "rfq_id": c["rfq_id"], "buyer_id": c["buyer_id"],
+                                          "buyer_type": c["buyer_type"], "bags": int(o["bags"]), "markup": float(o["markup"]),
+                                          "rule_markup": table[int(o["candidate"])].get("rule_markup")
+                                          or (hidden_rule[int(o["candidate"])] if hidden_rule else None)})
         except (KeyError, IndexError, TypeError, ValueError):
             ctx.notes.append(f"llm bad offer ignored: {o}")
     ctx.notes.append(f"llm reason: {str(answer.get('reason'))[:200]}")

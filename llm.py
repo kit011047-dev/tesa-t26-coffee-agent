@@ -27,6 +27,7 @@ class LLM:
 
     def ask_json(self, system: str, user: str, schema: dict, timeout: float | None = None) -> dict | None:
         self.last_error = None
+        self.last_text, self.last_usage = None, None
         client = self.client.with_options(timeout=min(timeout, self.timeout)) if timeout else self.client
         t0 = time.time()
         for style in range(self.style, len(THINKING_STYLES)):
@@ -43,6 +44,9 @@ class LLM:
                 return None
             self.style = style
             text = r.choices[0].message.content or ""
+            self.last_text = text[:4000]                                   # [T26] ไว้ดูบน dashboard
+            u = getattr(r, "usage", None)
+            self.last_usage = ({"prompt": u.prompt_tokens, "completion": u.completion_tokens} if u else None)
             answer = parse_json(text)
             if answer is None:
                 self.last_error = f"not JSON (finish={r.choices[0].finish_reason}): {text[:200]!r}"
