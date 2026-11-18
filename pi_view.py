@@ -66,6 +66,8 @@ def read_once(lot_ids: list[str], timeout: float = 2.0) -> dict:
                 for k in ("moisture_pct", "weight_kg"):
                     if body.get(k) is not None:
                         row[k] = body[k]
+                row["confidence"] = (body.get("track2") or {}).get("avg_confidence")
+                row["t1_device"] = (body.get("track1") or {}).get("device_id")
                 snap["lots"][lid] = row
     except Exception as e:                                  # noqa: BLE001 — Pi ล่มต้องไม่ทำให้ agent ล่ม
         snap["online"], snap["error"] = False, f"{type(e).__name__}: {e}"[:160]
@@ -113,12 +115,14 @@ def compare(state: dict, snap: dict) -> dict:
         rows.append({"lot_id": lid, "in_market": True,
                      "market_defect": s.get("defect_pct"), "market_moisture": s.get("moisture_pct"),
                      "pi_defect": p.get("defect_pct"), "pi_moisture": p.get("moisture_pct"),
-                     "beans": p.get("beans"), "bean_counts": p.get("bean_counts"), "missing": p.get("missing")})
+                     "beans": p.get("beans"), "bean_counts": p.get("bean_counts"), "missing": p.get("missing"),
+                     "confidence": p.get("confidence"), "t1_device": p.get("t1_device")})
     for lid, p in snap.get("lots", {}).items():
         if lid not in seen:
             rows.append({"lot_id": lid, "in_market": False, "market_defect": None, "market_moisture": None,
                          "pi_defect": p.get("defect_pct"), "pi_moisture": p.get("moisture_pct"),
-                         "beans": p.get("beans"), "bean_counts": p.get("bean_counts"), "missing": p.get("missing")})
+                         "beans": p.get("beans"), "bean_counts": p.get("bean_counts"), "missing": p.get("missing"),
+                     "confidence": p.get("confidence"), "t1_device": p.get("t1_device")})
     age = round(time.time() - snap["checked"]) if snap.get("checked") else None
     return {"enabled": True, "url": url(), "online": snap.get("online"), "mode": snap.get("mode"),
             "error": snap.get("error"), "age_s": age, "used_for_pricing": False, "lots": rows}
