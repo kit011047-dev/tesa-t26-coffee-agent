@@ -40,6 +40,7 @@ CAP_PRESSURE = 0.02                   # capacity ไม่พอขายหม�
 LADDER_ACROSS = False                 # ใบละ 1 กระสอบ + ยังไม่รู้จักผู้ซื้อ -> ไล่ขั้นบันไดข้ามใบ
 SKIP_SPEC_FAILED = True               # เคยโดน SPEC_MISMATCH กับประเภทผู้ซื้อไหน -> เลิกยื่นคู่นั้น (และปล่อยไปขาย Instant ได้ทันที)
 USE_CALENDAR = False                  # ใช้ demand_weight จากปฏิทินตลาด แบ่งขายมากในรอบที่ต้องการซื้อสูง
+LLM_MODE = "hybrid"                   # main.py ตั้งจาก .env: "hybrid" = กฎ+LLM (กฎเติมส่วนที่ขาด) | "llm" = LLM ล้วน
 RAISE_STRICT = False                 # True = ขายได้แต่มีซองแพ้ที่ราคาเท่ากัน -> ไม่ขยับขึ้น
 SOLD = ("ACCEPTED", "PARTIAL")
 
@@ -288,11 +289,22 @@ def llm_plan(state: dict, ctx: Context, cands: list[dict]) -> list[dict] | None:
         return None
     table = [{"candidate": i, **{k: c[k] for k in ("lot_id", "buyer", "buyer_type", "rfq_bags", "max_bags", "tv")}}
              for i, c in enumerate(cands)]
+    if LLM_MODE == "llm":
+        # [T26] LLM ล้วน: ไม่บอกคำตอบของกฎ ให้ LLM คิดเองจากผลที่ผ่านมา
+        hint = "Choose markups yourself from the recent results (ceilings are hidden; learn them)."
+    else:
+        # [T26] กฎ + LLM: แนบตัวคูณที่กฎ T26 คำนวณจากผลจริงของผู้ซื้อแต่ละราย ให้ LLM เห็นด้วยหรือปรับพร้อมเหตุผล
+        learned, rl = learn(ctx.memory, ctx.tv), rounds_left(state, ctx)
+        for row, c in zip(table, cands):
+            row["rule_markup"] = round(markup_for(c, learned, rl)[0], 3)
+        hint = ("Each candidate has rule_markup: what our tested rules suggest for that buyer, learned from real results "
+                "(raise after sales, lower after OUTBID/ABOVE_LIMIT). Use it unless you have a clear reason; "
+                "never go above a markup that buyer rejected as ABOVE_LIMIT.")
     user = "\n".join([
         f"Round {rnd['round_id']} ({rnd['kind']}), market calendar: {rnd['calendar']}. Rounds left: {rounds_left(state, ctx)}.",
         f"You may offer at most {state['capacity_left_kg'] // BAG if state['capacity_left_kg'] is not None else 'any'} bags in total this round.",
         f"Plan to offer about {target} bags in total this round: unsold beans lose 20% of their value at the end.",
-        f"Suggested markups: {json.dumps(MARKUP)}",
+        hint,
         "Recent results:", ctx.memory.summary() if ctx.memory else "none",
         "Candidates (lot x RFQ, already spec-checked):", json.dumps(table, ensure_ascii=False),
         "Pick offers. Use each candidate at most once; bags <= max_bags.",
@@ -346,10 +358,13 @@ def decide(state: dict, ctx: Context) -> tuple[list[dict], str]:
     if not cands:
         return [], "none"
     plan = llm_plan(state, ctx, cands) if ctx.llm else None
+    if plan and LLM_MODE == "llm":
+        # [T26] LLM ล้วน: ใช้แผนของ LLM อย่างเดียว ไม่เติมด้วยกฎ (guard ยังตรวจทุกซองเพื่อให้ถูกกติกา)
+        return guard(state, ctx, plan), "llm-only"
     if plan:
         # The LLM tends to offer too little. Rules fill whatever volume it left unused
         # (guard skips lot×RFQ pairs the LLM already used and stops at the round capacity).
         offers = guard(state, ctx, plan + rule_plan(state, ctx, cands))
         n_llm = len(guard(state, Context(ctx.rules, ctx.calendar, ctx.tv, ctx.rng), plan))
         return offers, "llm" if len(offers) == n_llm else f"llm+rules ({n_llm}+{len(offers) - n_llm})"
-    return guard(state, ctx, rule_plan(state, ctx, cands)), "rules"
+    return guard(state, ctx, rule_plan(state, ctx, cands)), "rules" if not ctx.llm else "rules (LLM ไม่ตอบ)"

@@ -70,8 +70,16 @@ def main() -> int:
         print("  ❌ .env ยังไม่มี MARKET_URL หรือ TEAM_KEY -> เปิด ~/tesa-starter/.env แล้วใส่ค่า")
         return 1
     print(f"  ✅ .env: MARKET_URL={url}  TEAM_KEY=****{key[-4:]}")
-    print(f"  {'⚪' if env.get('USE_LLM', '1') == '0' else '🟡'} USE_LLM={env.get('USE_LLM', '1')}"
-          f"{' (กฎล้วน ไม่เรียก LLM)' if env.get('USE_LLM', '1') == '0' else ' (ต้องมี LLM gateway ของงาน)'}")
+    if env.get("USE_LLM", "1") != "1":
+        print("  ⚪ โหมด: กฎล้วน (กลยุทธ์ T26 ไม่เรียก LLM)")
+    else:
+        mode = "LLM ล้วน" if env.get("LLM_MODE") == "llm" else "กฎ + LLM"
+        lurl = env.get("LLM_BASE_URL", "")
+        if not lurl or "GATEWAY-ADDRESS" in lurl:
+            print(f"  ❌ โหมด {mode} แต่ยังไม่ได้ใส่ LLM Base URL (ที่อยู่ gateway) -> ใส่ก่อน หรือเปลี่ยนเป็นกฎล้วน")
+            return 1
+        print(f"  🟡 โหมด: {mode} · gateway {lurl} · model {env.get('LLM_MODEL', 'event-llm')} · timeout {env.get('LLM_TIMEOUT', '60')} วิ"
+              " (ใช้ได้เฉพาะ gateway ของงาน)")
     try:
         r = httpx.get(url.rstrip("/") + "/v1/state", headers={"Authorization": f"Bearer {key}"}, timeout=8)
         st = r.json()

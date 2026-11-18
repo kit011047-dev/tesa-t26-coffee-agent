@@ -140,8 +140,13 @@ def main() -> None:
     load_env(HERE / ".env")
     api = Market(os.environ["MARKET_URL"], os.environ["TEAM_KEY"])
     llm = None
+    # [T26] โหมด: USE_LLM=0 กฎล้วน · USE_LLM=1 + LLM_MODE=hybrid กฎ+LLM · USE_LLM=1 + LLM_MODE=llm LLM ล้วน
+    strategy.LLM_MODE = os.environ.get("LLM_MODE", "hybrid")
     if os.environ.get("USE_LLM", "1") == "1":
-        llm = LLM(os.environ["LLM_BASE_URL"], os.environ["LLM_MODEL"], os.environ.get("LLM_API_KEY", ""),
+        key = os.environ.get("LLM_API_KEY", "")
+        if not key or "change-me" in key:              # gateway ใช้ key เดียวกับตลาด (คู่มือ)
+            key = os.environ["TEAM_KEY"]
+        llm = LLM(os.environ["LLM_BASE_URL"], os.environ["LLM_MODEL"], key,
                   timeout=float(os.environ.get("LLM_TIMEOUT", "60")), thinking=os.environ.get("LLM_THINKING") == "1")
     play(api, llm, "--forever" in sys.argv)
 

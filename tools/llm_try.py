@@ -48,7 +48,10 @@ def load_env() -> dict:
 def main() -> int:
     env = load_env()
     base, model = env.get("LLM_BASE_URL", ""), env.get("LLM_MODEL", "event-llm")
-    key = env.get("LLM_API_KEY") or env.get("TEAM_KEY", "")
+    key = env.get("LLM_API_KEY", "")
+    if not key or "change-me" in key:                       # gateway ใช้ key เดียวกับตลาด
+        key = env.get("TEAM_KEY", "")
+    strategy.LLM_MODE = env.get("LLM_MODE", "hybrid") if "--rules" in sys.argv or env.get("LLM_MODE") != "llm" else "llm"
     if not base or "GATEWAY-ADDRESS" in base:
         print("❌ ยังไม่ได้ใส่ที่อยู่ gateway: แก้ LLM_BASE_URL ใน .env เป็นที่อยู่ที่ทีมงานแจ้ง (เช่น http://x.x.x.x:4000/v1)")
         return 1
