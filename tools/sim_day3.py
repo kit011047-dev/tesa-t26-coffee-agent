@@ -17,6 +17,10 @@ CAL = [1.0] * 5 + [1.4] * 3 + [1.0] * 4 + [0.7] * 2 + [0.5]
 SEEDS = range(int(os.environ.get("SEEDS", "200")))
 
 VARIANTS = {
+    "เทศกาล Specialty: ทุกล็อตตามปฏิทิน": {"USE_CALENDAR": True, "FESTIVAL_SPECIALTY_ONLY": False},
+    "เทศกาล Specialty: เฉพาะล็อต Specialty": {"USE_CALENDAR": True, "FESTIVAL_SPECIALTY_ONLY": True},
+    "เทศกาล Specialty: ไม่ใช้ปฏิทิน": {"USE_CALENDAR": False},
+} if os.environ.get("SPEC") == "1" else {
     "ปัจจุบัน (ขั้นต่ำ 0.85)": {},
     "+ปฏิทิน": {"USE_CALENDAR": True},
     "ขั้นต่ำ 0.92": {"MIN_MARKUP": 0.92},
@@ -28,6 +32,7 @@ VARIANTS = {
 def run(cfg, harsh=None):
     pr, ratio, sold = [], [], []
     sim2.CAP, sim2.NOISE, sim2.CAL, sim2.ROUNDS = 1.6, 0.3, CAL, 15
+    sim2.SPEC_MODE = os.environ.get("SPEC") == "1"
     import importlib
     importlib.reload(sim2.strategy)
     for k, v in cfg.items():

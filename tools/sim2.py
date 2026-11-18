@@ -21,7 +21,9 @@ import strategy  # noqa: E402
 BAG = 60
 C_SPEC = dict(max_defect_pct=7.0, max_moisture_pct=12.5, min_screen=None)
 I_SPEC = dict(max_defect_pct=15.0, max_moisture_pct=14.0, min_screen=None)
+S_SPEC = dict(max_defect_pct=3.0, max_moisture_pct=12.5, min_screen=16)
 BUYERS = [("B3", "COMMERCIAL"), ("B4", "COMMERCIAL"), ("B5", "INSTANT"), ("B6", "INSTANT")]
+SPEC_MODE = False   # [T26] True = มีผู้ซื้อ Specialty 2 ราย + ล็อตเกรด Specialty ~40% และเทศกาล (CAL>1) ดันเฉพาะ RFQ ของ Specialty
 
 
 LAST: dict = {}
@@ -43,9 +45,13 @@ def make_game(rng: random.Random, harsh: float | None = None):
         else:
             s = dict(defect_pct=rng.uniform(16, 25), moisture_pct=rng.uniform(10, 13), screen=14); tv = rng.uniform(35, 60)
         lots.append((f"L{i+1}", rng.randint(2, 10) * BAG, s, round(tv, 2)))
+    if SPEC_MODE:
+        lots = [(l, kg, dict(defect_pct=rng.uniform(0.5, 2.8), moisture_pct=rng.uniform(10.5, 12.2), screen=17), round(rng.uniform(125, 150), 2))
+                if rng.random() < 0.4 else (l, kg, sm, tvv) for l, kg, sm, tvv in lots]
     h = rng.random() if harsh is None else harsh          # 0 = คู่แข่งใจดี, 1 = ตัดราคาแรง
-    ceil = {b: (rng.uniform(1.00, 1.07) if t == "COMMERCIAL" else rng.uniform(0.90, 0.97)) for b, t in BUYERS}
-    mu = {b: (1.03 - 0.07 * h if t == "COMMERCIAL" else 0.94 - 0.08 * h) + rng.gauss(0, 0.01) for b, t in BUYERS}
+    bl = BUYERS + ([("B1", "SPECIALTY"), ("B2", "SPECIALTY")] if SPEC_MODE else [])
+    ceil = {b: (rng.uniform(1.00, 1.07) if t == "COMMERCIAL" else rng.uniform(1.05, 1.15) if t == "SPECIALTY" else rng.uniform(0.90, 0.97)) for b, t in bl}
+    mu = {b: ((1.03 - 0.07 * h if t == "COMMERCIAL" else 1.08 - 0.07 * h if t == "SPECIALTY" else 0.94 - 0.08 * h) + rng.gauss(0, 0.01)) for b, t in bl}
     return lots, ceil, mu
 
 
@@ -72,12 +78,13 @@ def play(seed: int, harsh: float | None = None) -> float:
     for rn in range(1, ROUNDS + 1):
         rfqs = []
         k = 0
-        for b, t in BUYERS:
+        for b, t in BUYERS + ([("B1", "SPECIALTY"), ("B2", "SPECIALTY")] if SPEC_MODE else []):
             for _ in range(2):
                 k += 1
-                bags = max(1, round(rng.randint(4, 15) * (CAL[rn - 1] if CAL else 1)))
+                cw = (CAL[rn - 1] if CAL and (t == "SPECIALTY" or not SPEC_MODE) else 1)
+                bags = max(1, round(rng.randint(4, 15) * cw))
                 rfqs.append(dict(rfq_id=f"R{rn}-{k:02d}", buyer=b, buyer_id=b, buyer_type=t, kg=bags * BAG, bags=bags,
-                                 spec=C_SPEC if t == "COMMERCIAL" else I_SPEC))
+                                 spec=C_SPEC if t == "COMMERCIAL" else S_SPEC if t == "SPECIALTY" else I_SPEC))
         state = dict(round=dict(round_id=f"R{rn}", kind="real", number=rn, of=ROUNDS, calendar="ปกติ"), rfqs=rfqs,
                      lots=[dict(lot_id=l, kg_available=left[l], kg_remaining=left[l], sample=s) for l, _, s, _ in lots],
                      capacity_left_kg=cap_kg)
@@ -99,7 +106,7 @@ def play(seed: int, harsh: float | None = None) -> float:
             b = r["buyer_id"]
             # คู่แข่ง: กระสอบละซอง ตัวคูณ ~ N(ระดับของรอบนี้, 0.02)
             level = mu[b] + rng.gauss(0, 0.012)
-            base_bags = r["bags"] / (CAL[rn - 1] if CAL else 1)          # คู่แข่งไม่ตามปฏิทิน: ยื่นเท่าเดิม
+            base_bags = r["bags"] / (CAL[rn - 1] if CAL and (r["buyer_type"] == "SPECIALTY" or not SPEC_MODE) else 1)          # คู่แข่งไม่ตามปฏิทิน: ยื่นเท่าเดิม
             comp = [rng.gauss(level, 0.02) for _ in range(int(base_bags * rng.uniform(0.5, 1.4)))]
             book = [(m, None) for m in comp if m <= ceil[b]]
             mine = [o for o in offers if o["rfq_id"] == r["rfq_id"]]

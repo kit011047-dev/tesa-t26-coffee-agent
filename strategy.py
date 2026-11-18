@@ -41,6 +41,7 @@ CAP_PRESSURE = 0.02                   # capacity ไม่พอขายหม�
 LADDER_ACROSS = False                 # ใบละ 1 กระสอบ + ยังไม่รู้จักผู้ซื้อ -> ไล่ขั้นบันไดข้ามใบ
 SKIP_SPEC_FAILED = True               # เคยโดน SPEC_MISMATCH กับประเภทผู้ซื้อไหน -> เลิกยื่นคู่นั้น (และปล่อยไปขาย Instant ได้ทันที)
 USE_CALENDAR = True                   # [T26] เปิด 19 พ.ย. (sim_day3: PR +0.0006 ไม่เคยแย่ลง) ใช้ demand_weight จากปฏิทินตลาด แบ่งขายมากในรอบที่ต้องการซื้อสูง
+FESTIVAL_SPECIALTY_ONLY = True       # [T26] 20 พ.ย.: น้ำหนักเทศกาล (>1) ใช้กับล็อตเกรด Specialty เท่านั้น (False = ทุกล็อตเหมือนเดิม)
 LLM_HISTORY = 3                       # ส่งผลย้อนหลังให้ LLM กี่รอบ (main.py ตั้งจาก .env LLM_HISTORY)
 EXTRA_PROMPT = ""                     # คำสั่งเพิ่มเติมถึง LLM (main.py อ่านจาก llm_prompt_extra.txt)
 LLM_MODE = "hybrid"                   # main.py ตั้งจาก .env: "hybrid" = กฎ+LLM ประสาน (กฎทำแผน LLM ปรับ ±COORD_MAX) | "llm" = LLM ล้วน
@@ -90,17 +91,40 @@ def demand_weights(ctx: Context, total: int) -> dict[int, float]:
     return w
 
 
+_SPEC_SEEN: dict = {}   # [T26] สเปก Specialty ที่เคยเห็นจาก RFQ (รอบที่ไม่มี RFQ Specialty ยังรู้ว่าล็อตไหนเข้าเกรด)
+
+
+def specialty_lots(state: dict) -> set:
+    """[T26] ล็อตที่ผลวัดผ่านสเปก Specialty (ผู้ซื้อกลุ่มที่เทศกาลดันความต้องการ)"""
+    specs = [r["spec"] for r in state.get("rfqs", []) if r.get("buyer_type") == "SPECIALTY"]
+    if specs:                                              # จำสเปกที่หลวมที่สุดที่เห็น
+        _SPEC_SEEN.update(max_defect_pct=max(x["max_defect_pct"] for x in specs),
+                          max_moisture_pct=max(x["max_moisture_pct"] for x in specs),
+                          min_screen=min((x["min_screen"] for x in specs if x["min_screen"] is not None), default=None))
+    if not _SPEC_SEEN:
+        return set()
+    return {lot["lot_id"] for lot in state["lots"] if spec_ok(lot["sample"], _SPEC_SEEN)}
+
+
 def sell_budget(state: dict, ctx: Context) -> dict[str, int]:
     """How many kg of each lot to offer this round: spread sales over the rounds that are left."""
     # [T26] ใช้ปฏิทินตลาด: รอบที่ความต้องการซื้อสูง (เทศกาล) แบ่งขายมากกว่า รอบที่ต่ำแบ่งน้อยกว่า
     #       ปฏิทินเรียบ (ปกติทุกรอบ) = แบ่งเท่า ๆ กันเหมือนเดิม
+    # [T26] 20 พ.ย.: เทศกาลดันความต้องการเฉพาะ Specialty -> น้ำหนัก >1 ใช้กับล็อตเข้าเกรด Specialty เท่านั้น
+    #       ล็อตอื่นเจอแต่ช่วงใกล้ปิด (น้ำหนัก <1) ส่วนเทศกาลนับเป็น 1.0
     left = rounds_left(state, ctx)
     total = ctx.rules["timeline"]["rounds"]
     now = total - left + 1
     w = demand_weights(ctx, total) if USE_CALENDAR else {}
-    frac = (w.get(now, 1.0) / sum(w.get(r, 1.0) for r in range(now, total + 1))) if w else 1 / max(left, 1)
+    w_flat = {r: min(v, 1.0) for r, v in w.items()} if FESTIVAL_SPECIALTY_ONLY else w
+    spec_lots = specialty_lots(state) if (w and FESTIVAL_SPECIALTY_ONLY) else set()
+
+    def frac_of(wt: dict) -> float:
+        return (wt.get(now, 1.0) / sum(wt.get(r, 1.0) for r in range(now, total + 1))) if wt else 1 / max(left, 1)
+
     out = {}
     for lot in state["lots"]:
+        frac = frac_of(w if (not FESTIVAL_SPECIALTY_ONLY or lot["lot_id"] in spec_lots) else w_flat)
         avail = lot["kg_available"] // BAG * BAG
         share = avail if left <= 1 else math.ceil(avail * frac * PACE / BAG) * BAG
         out[lot["lot_id"]] = min(avail, max(BAG, share)) if avail >= BAG else 0

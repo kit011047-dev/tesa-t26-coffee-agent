@@ -203,7 +203,7 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
 
         # Read the clock from the server; never hard-code round times.
         left = state["seconds_left"] or 5
-        time.sleep(min(5.0, max(0.5, left + 0.2)))
+        time.sleep(min(2.0, max(0.5, left + 0.2)))      # [T26] เช็กถี่ขึ้น (5→2 วิ ≈0.5 คำขอ/วิ ไกลจากเพดาน 5/วิ) เริ่มรอบเปิดช้าลงน้อยลง
 
 
 def main() -> None:
