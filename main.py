@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 import dashboard_bridge as dash                    # [T26] ส่งความคิดของ agent ไป dashboard 7 ขั้น
+import pi_view                                     # [T26] ค่าจาก Pi (T1+T2) แสดงบน dashboard อย่างเดียว
 import strategy
 from appraisal import appraisal_items, estimate_lots
 from llm import LLM
@@ -119,6 +120,9 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
             log("new_game", market=state["market"], lots=len(state["lots"]), tv=tv,
                 **({"ab_mode": game_mode} if ab else {}))
             dash.start(state.get("team_id", "?"), "T26 ขั้นบันได + เรียนรู้รายผู้ซื้อ", str(api.http.base_url), tv)
+            if pi_view.enabled():                   # [T26] แสดงอย่างเดียว: ค่าจาก Pi ไม่เข้า appraisal/strategy
+                pi_view.set_market_lots([l["lot_id"] for l in state["lots"]])
+                pi_view.start()
         phase = state["phase"]
 
         if phase == "APPRAISAL" and not state["appraisal_submitted"]:
@@ -134,6 +138,8 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
             memory.record_results(state["last_results"])
             dash.learning(state["last_results"], memory)
             dash.round_open(state, rules)
+            if pi_view.enabled():
+                dash.sensors(state)                 # อยู่ใน try ของ dashboard: Pi พังไม่ทำให้ agent ล่ม
             if any(o["round_id"] == rid for o in state["my_open_offers"]):
                 # restarted after sending this round: the market already holds our offers, and a new batch
                 # would replace them (capacity_left_kg no longer counts them, so it would offer less)

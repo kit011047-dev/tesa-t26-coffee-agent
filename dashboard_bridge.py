@@ -92,7 +92,8 @@ def start(team: str, strategy_name: str, base_url: str, tv: dict) -> None:
     _path.parent.mkdir(parents=True, exist_ok=True)
     _path.write_text("", encoding="utf-8")
     _seq, _run, _tv = 0, time.strftime("%Y%m%d_%H%M%S"), dict(tv)
-    _write("start", 0, {"team": team, "strategy": strategy_name, "base_url": base_url, "pi_enabled": False})
+    _write("start", 0, {"team": team, "strategy": strategy_name, "base_url": base_url,
+                        "pi_enabled": os.environ.get("PI_ENABLED", "0") == "1"})
 
 
 @_safe
@@ -221,6 +222,13 @@ def llm_round(state: dict, info: dict, source: str, offers: list[dict], llm) -> 
                      "extra_prompt": bool(strategy.EXTRA_PROMPT.strip())},
         "system": (info.get("system") or "")[-3000:], "user": (info.get("user") or "")[:6000],
         "raw": info.get("raw")})
+
+
+@_safe
+def sensors(state: dict) -> None:
+    """[T26] ค่าจาก Raspberry Pi (T1 ความชื้น + T2 YOLO) เทียบตัวอย่างจากตลาด · แสดงอย่างเดียว ไม่ใช้ตั้งราคา"""
+    import pi_view
+    _write("sensors", _rnum(state), pi_view.compare(state, pi_view.snapshot()))
 
 
 @_safe
