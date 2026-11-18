@@ -10,9 +10,11 @@
     (ยังไม่ได้รับการยืนยันจากทีมงานว่ากติกาให้ใช้ข้อมูลเซนเซอร์ตั้งราคา)
   - อ่านในเธรดเบื้องหลัง agent ไม่ต้องรอ Pi · Pi ล่ม/ช้า = แค่แสดงว่าออฟไลน์ ไม่กระทบการขาย
   - ปิดเป็นค่าเริ่มต้น เปิดด้วย PI_ENABLED=1 ใน .env (PI_URL=http://<IP Pi>:8100)
+  - PI_SOURCE=http (ค่าเริ่มต้น: ถาม pi_server ทุก 10 วิ) | mqtt (subscribe t26/lot/# ที่ broker บน Pi :1883)
 
 ลองเอง:  python pi_view.py            # อ่าน Pi ครั้งเดียวแล้วพิมพ์ผล
 """
+import json
 import os
 import threading
 import time
@@ -74,12 +76,95 @@ def read_once(lot_ids: list[str], timeout: float = 2.0) -> dict:
     return snap
 
 
+# ---------------------------------------------------------------------
+# [T26] ทางเลือก MQTT (PI_SOURCE=mqtt): T1/T2 publish เข้า broker บน Pi แล้ว agent subscribe
+#   t26/lot/<lot_id>/moisture  <- T1 (JSON เหมือนไฟล์ track1/<lot>.json)
+#   t26/lot/<lot_id>/quality   <- T2 (JSON เหมือนไฟล์ outbox/<lot>.json)
+# ไม่มี paho-mqtt หรือต่อ broker ไม่ได้ = แค่แสดงว่าออฟไลน์ agent เล่นต่อได้
+_mq_data: dict = {}            # lot_id -> {"moisture": {...}, "quality": {...}, "at": เวลาที่ได้รับล่าสุด}
+_mq_state = {"connected": False, "error": "ยังไม่ได้ต่อ broker"}
+
+
+def source() -> str:
+    return os.environ.get("PI_SOURCE", "http").lower()
+
+
+def mqtt_host() -> tuple[str, int]:
+    from urllib.parse import urlparse
+    host = os.environ.get("PI_MQTT_HOST") or urlparse(url()).hostname or "127.0.0.1"
+    return host, int(os.environ.get("PI_MQTT_PORT", "1883"))
+
+
+def _mq_on_message(client, userdata, msg) -> None:
+    try:
+        parts = msg.topic.split("/")                       # t26/lot/<lot_id>/<kind>
+        if len(parts) != 4 or parts[3] not in ("moisture", "quality"):
+            return
+        doc = json.loads(msg.payload.decode("utf-8"))
+        with _lock:
+            d = _mq_data.setdefault(parts[2], {})
+            d[parts[3]], d["at"] = doc, time.time()
+    except Exception as e:                                  # noqa: BLE001 — ข้อความเพี้ยนต้องไม่ทำให้ agent ล่ม
+        _mq_state["error"] = f"ข้อความเพี้ยน {msg.topic}: {e}"[:160]
+
+
+def mqtt_snapshot() -> dict:
+    """แปลงข้อความ MQTT ที่ได้รับเป็นรูปแบบเดียวกับ read_once()"""
+    snap = {"online": _mq_state["connected"], "checked": time.time(), "mode": "mqtt",
+            "error": None if _mq_state["connected"] else _mq_state["error"], "lots": {}}
+    with _lock:
+        items = {k: dict(v) for k, v in _mq_data.items()}
+    for lid, d in items.items():
+        row: dict = {"missing": {}}
+        m, q = d.get("moisture"), d.get("quality")
+        if m and m.get("moisture_pct") is not None:
+            row["moisture_pct"], row["t1_device"] = m["moisture_pct"], m.get("device_id")
+        else:
+            row["missing"]["moisture_pct"] = "ยังไม่มีข้อความจาก T1"
+        if q and q.get("counts"):
+            row["bean_counts"] = {k: int(v) for k, v in q["counts"].items()}
+            row["beans"] = sum(row["bean_counts"].values())
+            row["defect_pct"] = defect_pct(row["bean_counts"])
+            row["confidence"] = q.get("avg_confidence")
+        else:
+            row["missing"]["bean_counts"] = "ยังไม่มีข้อความจาก T2"
+        snap["lots"][lid] = row
+    return snap
+
+
+def _mqtt_start() -> None:
+    try:
+        import paho.mqtt.client as mqtt
+    except ImportError:
+        _mq_state["error"] = "ไม่มี paho-mqtt (pip install paho-mqtt)"
+        return
+
+    def on_connect(client, userdata, flags, reason, props=None):
+        ok = not reason.is_failure
+        _mq_state["connected"], _mq_state["error"] = bool(ok), None if ok else f"broker ปฏิเสธ: {reason}"
+        if ok:
+            client.subscribe("t26/lot/#", qos=1)
+
+    def on_disconnect(client, userdata, flags, reason, props=None):
+        _mq_state["connected"], _mq_state["error"] = False, f"หลุดจาก broker: {reason}"
+
+    host, port = mqtt_host()
+    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"t26-agent-{os.getpid()}")
+    c.on_connect, c.on_disconnect, c.on_message = on_connect, on_disconnect, _mq_on_message
+    c.reconnect_delay_set(1, 10)
+    try:
+        c.connect_async(host, port, keepalive=30)          # ไม่รอ: broker ไม่อยู่ก็ไม่ค้าง
+        c.loop_start()                                     # เธรดของ paho ต่อใหม่เองเมื่อหลุด
+    except Exception as e:                                  # noqa: BLE001
+        _mq_state["error"] = f"{type(e).__name__}: {e}"[:160]
+
+
 def _loop(every: float) -> None:
     global _snap
     while True:
         with _lock:
             ids = list(_market_lots)
-        s = read_once(ids)
+        s = mqtt_snapshot() if source() == "mqtt" else read_once(ids)
         with _lock:
             _snap = s
         time.sleep(every)
@@ -90,7 +175,9 @@ def start() -> None:
     global _thread
     if not enabled() or _thread is not None:
         return
-    every = float(os.environ.get("PI_POLL_S", "10"))
+    if source() == "mqtt":
+        _mqtt_start()
+    every = float(os.environ.get("PI_POLL_S", "10" if source() == "http" else "2"))
     _thread = threading.Thread(target=_loop, args=(every,), daemon=True, name="pi_view")
     _thread.start()
 
@@ -124,7 +211,7 @@ def compare(state: dict, snap: dict) -> dict:
                          "beans": p.get("beans"), "bean_counts": p.get("bean_counts"), "missing": p.get("missing"),
                      "confidence": p.get("confidence"), "t1_device": p.get("t1_device")})
     age = round(time.time() - snap["checked"]) if snap.get("checked") else None
-    return {"enabled": True, "url": url(), "online": snap.get("online"), "mode": snap.get("mode"),
+    return {"enabled": True, "url": url() if source() == "http" else "mqtt://%s:%d" % mqtt_host(), "online": snap.get("online"), "mode": snap.get("mode"),
             "error": snap.get("error"), "age_s": age, "used_for_pricing": False, "lots": rows}
 
 
@@ -137,5 +224,10 @@ if __name__ == "__main__":
             if "=" in line and not line.lstrip().startswith("#"):
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
-    s = read_once([])
+    if source() == "mqtt":
+        _mqtt_start()
+        time.sleep(float(os.environ.get("PI_WAIT_S", "3")))
+        s = mqtt_snapshot()
+    else:
+        s = read_once([])
     print(json.dumps(compare({"lots": []}, s), ensure_ascii=False, indent=1))
