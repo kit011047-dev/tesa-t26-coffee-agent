@@ -24,6 +24,9 @@ I_SPEC = dict(max_defect_pct=15.0, max_moisture_pct=14.0, min_screen=None)
 BUYERS = [("B3", "COMMERCIAL"), ("B4", "COMMERCIAL"), ("B5", "INSTANT"), ("B6", "INSTANT")]
 
 
+LAST: dict = {}
+
+
 class Mem:
     def __init__(self):
         self.sent, self.rounds = {}, []
@@ -119,6 +122,7 @@ def play(seed: int, harsh: float | None = None) -> float:
                                 status=st, filled_kg=f * BAG))
         mem.rounds.append(dict(round_id=f"R{rn}", my_offers=res, market_summary=[]))
     total = sum(kg * v for _, kg, _, v in lots)
+    LAST.update(rev=rev, sold_tv=total - sum(tv[l] * kg for l, kg in left.items()), total_tv=total)   # [T26] ไว้คิดคะแนนแบบราคาขาย÷TV
     return (rev + sum(0.8 * tv[l] * kg for l, kg in left.items())) / total
 
 

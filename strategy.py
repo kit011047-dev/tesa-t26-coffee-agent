@@ -40,7 +40,7 @@ CAP_ORDER = "tv"                      # capacity จำกัด: "tv" = ล็�
 CAP_PRESSURE = 0.02                   # capacity ไม่พอขายหมด -> ลดราคาเพิ่มเท่านี้
 LADDER_ACROSS = False                 # ใบละ 1 กระสอบ + ยังไม่รู้จักผู้ซื้อ -> ไล่ขั้นบันไดข้ามใบ
 SKIP_SPEC_FAILED = True               # เคยโดน SPEC_MISMATCH กับประเภทผู้ซื้อไหน -> เลิกยื่นคู่นั้น (และปล่อยไปขาย Instant ได้ทันที)
-USE_CALENDAR = False                  # ใช้ demand_weight จากปฏิทินตลาด แบ่งขายมากในรอบที่ต้องการซื้อสูง
+USE_CALENDAR = True                   # [T26] เปิด 19 พ.ย. (sim_day3: PR +0.0006 ไม่เคยแย่ลง) ใช้ demand_weight จากปฏิทินตลาด แบ่งขายมากในรอบที่ต้องการซื้อสูง
 LLM_HISTORY = 3                       # ส่งผลย้อนหลังให้ LLM กี่รอบ (main.py ตั้งจาก .env LLM_HISTORY)
 EXTRA_PROMPT = ""                     # คำสั่งเพิ่มเติมถึง LLM (main.py อ่านจาก llm_prompt_extra.txt)
 LLM_MODE = "hybrid"                   # main.py ตั้งจาก .env: "hybrid" = กฎ+LLM ประสาน (กฎทำแผน LLM ปรับ ±COORD_MAX) | "llm" = LLM ล้วน
