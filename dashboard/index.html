@@ -591,6 +591,7 @@ function renderCtl() {
   if (document.activeElement !== $("fThink") && !THINK_DIRTY) $("fThink").value = c.llm_thinking === "1" ? "1" : "0";
   if (document.activeElement !== $("fExtra") && !EXTRA_DIRTY) $("fExtra").value = c.llm_extra || "";
   $("bStart").disabled = $("bPractice").disabled = run; $("bStop").disabled = !run;
+  if (c.key_profile === "competition") { $("bPractice").disabled = true; $("bPractice").title = "ปิดไว้: key แข่งใช้โหมดซ้อมไม่ได้"; }
   $("bSave").disabled = run;
   const log = (c.console || []).join("\n");
   if ($("cLog").textContent !== log) { $("cLog").textContent = log; $("cLog").scrollTop = 1e9; }

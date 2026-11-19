@@ -43,6 +43,17 @@ def zero_rounds() -> list[str]:
     return out
 
 
+def llm_stats() -> tuple[int, int]:
+    """[T26] (รอบที่ส่งซอง, รอบที่ LLM ไม่ตอบ/ไม่ทัน แล้วใช้ราคาของกฎแทน) ตั้งแต่เกมล่าสุดเริ่ม (จาก decisions.jsonl)"""
+    p = HERE / "logs" / "decisions.jsonl"
+    if not p.exists():
+        return 0, 0
+    rows = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    start = max((i for i, r in enumerate(rows) if r.get("event") == "new_game"), default=0)
+    sent = [r for r in rows[start:] if r.get("event") == "offers_sent"]
+    return len(sent), sum("ไม่ตอบ" in str(r.get("source", "")) for r in sent)
+
+
 def main() -> None:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     path, mem = load_memory(args[0] if args else None)
@@ -92,6 +103,11 @@ def main() -> None:
     print("\nรอบที่ส่ง 0 ซอง / ROUND_CLOSED:", ", ".join(z) if z else "ไม่มี")
     if z:
         alerts.append("มีรอบส่ง 0 ซองหรือ ROUND_CLOSED → ดู log หาเหตุ (ของหมด / สเปก / capacity / ช้าไป)")
+
+    n_sent, n_llm_fail = llm_stats()
+    print(f"รอบที่ LLM ไม่ตอบ/ไม่ทัน (ใช้กฎแทน): {n_llm_fail} จาก {n_sent} รอบ")
+    if n_sent >= 4 and n_llm_fail / n_sent > 0.25:
+        alerts.append(f"LLM หลุด {n_llm_fail}/{n_sent} รอบ (> 25%) → agent ใช้กฎเองอยู่ ไม่เสียรอบ · ห้ามสลับไป LLM อื่น · ถ้าหลุดต่อเนื่องให้แจ้งทีมงาน")
 
     if "--live" in sys.argv:
         for l in (HERE / ".env").read_text(encoding="utf-8").splitlines():

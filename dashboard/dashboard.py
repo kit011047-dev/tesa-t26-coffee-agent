@@ -207,6 +207,8 @@ def control_llm_test(body: dict) -> dict:
 
 def control_start(body: dict) -> dict:
     global _proc, _started, _stopped
+    if body.get("forever") and _read_env().get("KEY_PROFILE") == "competition":   # [T26] --forever ไว้ซ้อม sandbox เท่านั้น
+        return {"ok": False, "msg": "ปฏิเสธ: โหมดซ้อม (เล่นต่อเรื่อย ๆ) ใช้กับ key แข่งไม่ได้ ใช้ปุ่ม ② เริ่มแข่ง แทน"}
     if _running() or _external_agent():
         return {"ok": False, "msg": "agent รันอยู่แล้ว"}
     args = ["/bin/bash", str(STARTER / "run.sh")] + (["--forever"] if body.get("forever") else [])
