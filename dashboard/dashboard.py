@@ -36,6 +36,9 @@ _last_check = ""
 _last_llm = ""
 
 
+PROFILES = ("practice", "competition")          # [T26] คีย์ฝึก / คีย์แข่ง
+
+
 def _read_env() -> dict:
     env = {}
     p = STARTER / ".env"
@@ -76,7 +79,11 @@ def control_status() -> dict:
     tail = []
     if CONSOLE.exists():
         tail = CONSOLE.read_text(encoding="utf-8", errors="replace").splitlines()[-40:]
+    prof = env.get("KEY_PROFILE", "")
     return {"market_url": env.get("MARKET_URL", ""), "key_tail": key[-4:] if key else "",
+            "key_profile": prof if prof in PROFILES else "",
+            "profiles": {n: {"key_tail": env.get(f"TEAM_KEY_{n.upper()}", "")[-4:], "url": env.get(f"MARKET_URL_{n.upper()}", "")}
+                         for n in PROFILES},
             "use_llm": env.get("USE_LLM", "1"), "running": _running(),
             "mode": "rules" if env.get("USE_LLM", "1") != "1" else ("llm" if env.get("LLM_MODE") == "llm" else "hybrid"),
             "llm_base_url": env.get("LLM_BASE_URL", ""), "llm_model": env.get("LLM_MODEL", "event-llm"),
@@ -104,6 +111,18 @@ def control_env(body: dict) -> dict:
         if not re.fullmatch(r"[\x21-\x7e]{6,200}", key):
             return {"ok": False, "msg": "key ไม่ถูกรูปแบบ (ห้ามมีช่องว่าง)"}
         up["TEAM_KEY"] = key
+    prof = (body.get("key_profile") or "").strip() or _read_env().get("KEY_PROFILE", "")
+    if (body.get("key_profile") or "").strip() not in ("",) + PROFILES:
+        return {"ok": False, "msg": "ชนิด key ไม่ถูกต้อง"}
+    if prof in PROFILES:
+        cur, P = _read_env(), prof.upper()
+        k = key or cur.get(f"TEAM_KEY_{P}", "")
+        u = url or cur.get(f"MARKET_URL_{P}", "")
+        if not k:
+            return {"ok": False, "msg": f"ยังไม่มี key {'ฝึก' if prof == 'practice' else 'แข่ง'} ที่บันทึกไว้ วาง key ในช่อง Team KEY แล้วบันทึก"}
+        if not u:
+            return {"ok": False, "msg": f"ยังไม่มี Market URL ของ key {'ฝึก' if prof == 'practice' else 'แข่ง'} ใส่ในช่อง Market URL ก่อน"}
+        up.update({f"TEAM_KEY_{P}": k, f"MARKET_URL_{P}": u, "TEAM_KEY": k, "MARKET_URL": u, "KEY_PROFILE": prof})
     mode = (body.get("mode") or "").strip()
     if mode:
         if mode not in ("rules", "hybrid", "llm"):

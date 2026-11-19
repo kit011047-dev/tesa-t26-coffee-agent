@@ -202,6 +202,13 @@ details.ctl-log summary { cursor: pointer; color: var(--ink-3); font-size: 12.5p
       <div class="ctl-col">
         <h3><span class="n">1</span>ตลาดกาแฟ</h3>
         <label>Market URL<input id="fUrl" placeholder="http://..." autocomplete="off" spellcheck="false"></label>
+        <label>ชนิด key
+          <select id="fProf">
+            <option value="">(ไม่เปลี่ยน)</option>
+            <option value="practice">🧪 key ฝึก (sandbox)</option>
+            <option value="competition">🏁 key แข่ง (ตลาดจริง)</option>
+          </select></label>
+        <div class="hint" id="profInfo"></div>
         <label>Team KEY<input id="fKey" type="password" placeholder="วาง key แข่งที่นี่" autocomplete="new-password" data-lpignore="true" spellcheck="false"></label>
         <div class="hint">เว้นว่าง = ใช้ค่าเดิม · หน้าเว็บไม่แสดง key เต็ม</div>
       </div>
@@ -555,7 +562,7 @@ drawLinks(null); poll();
 
 // ---------------- [T26] แผงควบคุม ----------------
 const H = { "Content-Type": "application/json", "X-T26": "1" };
-let CTL = {}, MODE_DIRTY = false, THINK_DIRTY = false, EXTRA_DIRTY = false;
+let CTL = {}, PROF_DIRTY = false, MODE_DIRTY = false, THINK_DIRTY = false, EXTRA_DIRTY = false;
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? { headers: H, cache: "no-store" } : { method: "POST", headers: H, body: JSON.stringify(body) });
   return r.json();
@@ -569,6 +576,10 @@ function renderCtl() {
     : c.exit_code != null ? "agent หยุด (มีปัญหา ดู log)" : "agent ยังไม่ทำงาน";
   st.className = "ctl-state" + (run ? " run" : !c.stopped && c.exit_code != null && c.exit_code !== 0 ? " err" : "");
   if (document.activeElement !== $("fUrl") && !$("fUrl").value) $("fUrl").placeholder = c.market_url || "http://...";
+  const PN = { practice: "🧪 ฝึก", competition: "🏁 แข่ง" }, pf = c.profiles || {};
+  if (document.activeElement !== $("fProf") && !PROF_DIRTY) $("fProf").value = c.key_profile || "";
+  $("profInfo").textContent = "กำลังใช้: " + (PN[c.key_profile] || "ไม่ระบุชนิด") + " · ที่บันทึกไว้: " +
+    ["practice", "competition"].map(n => `${PN[n]} ${pf[n] && pf[n].key_tail ? "****" + pf[n].key_tail : "ยังไม่มี"}`).join(" / ");
   $("fKey").placeholder = c.key_tail ? `ตอนนี้ใช้ key ลงท้าย ****${c.key_tail} (วาง key ใหม่เพื่อเปลี่ยน)` : "วาง key แข่งที่นี่";
   if (document.activeElement !== $("fMode") && !MODE_DIRTY) $("fMode").value = c.mode || "rules";
   $("fLUrl").placeholder = c.llm_base_url && !/GATEWAY-ADDRESS/.test(c.llm_base_url) ? c.llm_base_url : "http://x.x.x.x:4000/v1 (ยังไม่ได้ใส่)";
@@ -592,13 +603,13 @@ async function ctlPoll() {
 $("bSave").onclick = async () => {
   busy(true);
   try {
-    const r = await api("/api/control/env", { market_url: $("fUrl").value, team_key: $("fKey").value,
+    const r = await api("/api/control/env", { market_url: $("fUrl").value, team_key: $("fKey").value, key_profile: PROF_DIRTY ? $("fProf").value : "",
       mode: MODE_DIRTY ? $("fMode").value : "", llm_base_url: $("fLUrl").value, llm_model: $("fModel").value,
       llm_timeout: $("fTmo").value, llm_api_key: $("fLKey").value,
       llm_temperature: $("fTemp").value, llm_max_tokens: $("fMaxTok").value, llm_history: $("fHist").value,
       llm_thinking: THINK_DIRTY ? $("fThink").value : "", llm_extra: EXTRA_DIRTY ? $("fExtra").value : null });
     msg(r.msg, r.ok);
-    if (r.ok) { ["fKey", "fUrl", "fLUrl", "fModel", "fTmo", "fLKey", "fTemp", "fMaxTok", "fHist"].forEach(id => $(id).value = ""); MODE_DIRTY = THINK_DIRTY = EXTRA_DIRTY = false; CTL = await api("/api/control/status"); }
+    if (r.ok) { ["fKey", "fUrl", "fLUrl", "fModel", "fTmo", "fLKey", "fTemp", "fMaxTok", "fHist"].forEach(id => $(id).value = ""); PROF_DIRTY = MODE_DIRTY = THINK_DIRTY = EXTRA_DIRTY = false; CTL = await api("/api/control/status"); }
   } finally { busy(false); }
 };
 $("bCheck").onclick = async () => {
@@ -611,18 +622,19 @@ $("bCheck").onclick = async () => {
   } finally { busy(false); }
 };
 function unsaved() {
-  return MODE_DIRTY || THINK_DIRTY || EXTRA_DIRTY ||
+  return PROF_DIRTY || MODE_DIRTY || THINK_DIRTY || EXTRA_DIRTY ||
     ["fKey", "fUrl", "fLUrl", "fModel", "fTmo", "fLKey", "fTemp", "fMaxTok", "fHist"].some(id => $(id).value.trim() !== "");
 }
 async function start(forever) {
   if (unsaved()) { msg("⚠️ มีค่าที่แก้แต่ยังไม่ได้บันทึก (เช่น โหมด หรือช่องที่กรอกไว้) กด \"บันทึกการตั้งค่า\" ก่อน หรือล้างช่องนั้นให้ว่าง", false); return; }
   const where = CTL.market_url || "?";
   const MODE_TH = { rules: "กฎล้วน", hybrid: "กฎ + LLM", llm: "LLM ล้วน" };
-  if (!confirm(`เริ่ม agent กับตลาด ${where}\nkey ลงท้าย ****${CTL.key_tail || "?"}\nโหมด: ${MODE_TH[CTL.mode] || CTL.mode}\n\nเริ่มแล้วห้ามกดยื่นอะไรบนหน้า /trade เอง`)) return;
+  if (!confirm(`เริ่ม agent กับตลาด ${where}\nkey ลงท้าย ****${CTL.key_tail || "?"} (${{ practice: "ฝึก", competition: "แข่ง" }[CTL.key_profile] || "ไม่ระบุชนิด"})\nโหมด: ${MODE_TH[CTL.mode] || CTL.mode}\n\nเริ่มแล้วห้ามกดยื่นอะไรบนหน้า /trade เอง`)) return;
   busy(true);
   try { const r = await api("/api/control/start", { forever }); msg(r.msg, r.ok); CTL = await api("/api/control/status"); }
   finally { busy(false); }
 }
+$("fProf").onchange = () => { PROF_DIRTY = true; msg("เปลี่ยนชนิด key แล้ว กด \"บันทึกการตั้งค่า\" เพื่อใช้ (ถ้ายังไม่เคยบันทึก key ชนิดนี้ ให้วาง key + URL ด้วย)", true); };
 $("fMode").onchange = () => { MODE_DIRTY = true; $("llmCol").classList.toggle("dim", $("fMode").value === "rules"); msg("เปลี่ยนโหมดแล้ว กด \"บันทึกการตั้งค่า\" เพื่อใช้", true); };
 $("fThink").onchange = () => { THINK_DIRTY = true; };
 $("fExtra").oninput = () => { EXTRA_DIRTY = true; };
