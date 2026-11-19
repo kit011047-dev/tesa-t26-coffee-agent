@@ -10,7 +10,7 @@
     (ยังไม่ได้รับการยืนยันจากทีมงานว่ากติกาให้ใช้ข้อมูลเซนเซอร์ตั้งราคา)
   - อ่านในเธรดเบื้องหลัง agent ไม่ต้องรอ Pi · Pi ล่ม/ช้า = แค่แสดงว่าออฟไลน์ ไม่กระทบการขาย
   - ปิดเป็นค่าเริ่มต้น เปิดด้วย PI_ENABLED=1 ใน .env (PI_URL=http://<IP Pi>:8100)
-  - PI_SOURCE=http (ค่าเริ่มต้น: ถาม pi_server ทุก 10 วิ) | mqtt (subscribe t26/lot/# ที่ broker บน Pi :1883)
+  - PI_SOURCE: ล็อกเป็น http เสมอ (ถาม pi_server ทุก 10 วิ) · mqtt ถูกปิดตามประกาศผู้จัด: ด่าน 3 ไม่มีการรับ/ส่ง MQTT กับ track อื่น
 
 ลองเอง:  python pi_view.py            # อ่าน Pi ครั้งเดียวแล้วพิมพ์ผล
 """
@@ -86,7 +86,9 @@ _mq_state = {"connected": False, "error": "ยังไม่ได้ต่อ 
 
 
 def source() -> str:
-    return os.environ.get("PI_SOURCE", "http").lower()
+    """[T26] ประกาศผู้จัด 19 พ.ย. 17:29: ด่าน 3 ไม่มีการรับ/ส่ง MQTT กับ track อื่น -> ล็อกเป็น http เสมอ
+    (PI_SOURCE=mqtt ถูกเมิน · โค้ด MQTT ด้านล่างเก็บไว้เฉยๆ ไม่ถูกเรียก)"""
+    return "http"
 
 
 def mqtt_host() -> tuple[str, int]:
