@@ -135,6 +135,13 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
         elif phase == "ROUND_OPEN" and not state["paused"] and state["round"]["round_id"] not in acted:
             rid = state["round"]["round_id"]
             acted.add(rid)
+            if not state.get("appraisal_submitted"):
+                # [T26] พลาดช่วง APPRAISAL (เกม sandbox 04:24 ได้ 0/20) -> ลองส่งผลประเมินตอนนี้ ตลาดอาจรับหรือปฏิเสธ บันทึกผลไว้ทั้งสองกรณี
+                try:
+                    api.appraise(appraisal_items(rules, state["lots"], tv))
+                    log("appraisal_late_sent", round=rid, tv=tv)
+                except MarketError as e:
+                    log("appraisal_late_error", round=rid, error=str(e))
             memory.record_results(state["last_results"])
             dash.learning(state["last_results"], memory)
             dash.round_open(state, rules)
@@ -190,7 +197,10 @@ def play(api: Market, llm: LLM | None, forever: bool) -> None:
             score = None
             if state.get("market") == "sandbox":            # ตลาดฝึกเท่านั้น: ดูคะแนนจริงหลังปิดตลาด
                 try:
-                    score = api.call("GET", "/v1/sandbox/reveal").get("score")
+                    rev = api.call("GET", "/v1/sandbox/reveal")
+                    score = rev.get("score")
+                    with open(LOGS / "reveal.jsonl", "a", encoding="utf-8") as rf:   # [T26] ค่าจริงเทียบค่าตัวอย่างของทุกเกม ไว้ศึกษา noise ของ Sample
+                        rf.write(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%S"), "lots": rev.get("lots"), "score": score}, ensure_ascii=False) + "\n")
                 except Exception:                           # noqa: BLE001
                     pass
                 if score:                                   # [T26] เก็บคะแนนจริงทุกเกมไว้เทียบโหมด
