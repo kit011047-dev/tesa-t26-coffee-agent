@@ -8,6 +8,7 @@ dashboard.py: หน้าต่างดูการทำงานของ ag
 ใช้แค่ standard library ของ Python
 """
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -18,6 +19,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
 
 HERE = Path(__file__).resolve().parent
 EVENTS = HERE / "live" / "events.jsonl"
@@ -94,6 +96,7 @@ def control_status() -> dict:
             "llm_thinking": env.get("LLM_THINKING", "0"), "llm_history": env.get("LLM_HISTORY", "3"),
             "llm_extra": (STARTER / "llm_prompt_extra.txt").read_text(encoding="utf-8")
                          if (STARTER / "llm_prompt_extra.txt").exists() else "",
+            "pi_enabled": env.get("PI_ENABLED", "0") == "1",
             "external": (not _running()) and _external_agent(),
             "started": _started, "stopped": _stopped, "exit_code": None if _proc is None else _proc.poll(),
             "console": tail, "check": _last_check, "starter": str(STARTER)}
@@ -238,6 +241,97 @@ def control_stop() -> dict:
     return {"ok": False, "msg": "ไม่มี agent รันอยู่"}
 
 
+# ---------------- [T26] ตัวชี้วัดสดสำหรับหน้า "ระหว่างแข่ง" / "เวที" (อ่านอย่างเดียว) ----------------
+_cache: dict = {}
+
+
+def _market_get(path: str, ttl: float) -> dict:
+    """GET ตลาดแบบมีแคช (state 2 วิ · calendar 60 วิ) ไม่ถี่เกินลิมิต 5 คำขอ/วินาที · ผิดพลาด -> {"_error": ...}"""
+    now = time.time()
+    c = _cache.get(path)
+    if c and now - c[0] < ttl:
+        return c[1]
+    env = _read_env()
+    try:
+        req = Request(env["MARKET_URL"].rstrip("/") + path, headers={"Authorization": "Bearer " + env["TEAM_KEY"]})
+        with urlopen(req, timeout=3) as r:
+            data = json.loads(r.read())
+    except Exception as e:                      # noqa: BLE001
+        data = {"_error": type(e).__name__}
+    _cache[path] = (now, data)
+    return data
+
+
+def _summary_mod():
+    spec = importlib.util.spec_from_file_location("t26_summary", STARTER / "tools" / "summary.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def metrics() -> dict:
+    env = _read_env()
+    prof = env.get("KEY_PROFILE", "")
+    out: dict = {"profile": prof if prof in PROFILES else "", "alerts": [], "rows": [], "types": [], "calendar": [], "llm": {"sent": 0, "fail": 0}}
+    alerts = out["alerts"]
+    st = _market_get("/v1/state", 2.0)
+    if "_error" in st:
+        out["market_error"] = st["_error"]
+        alerts.append({"level": "warn", "text": f"ต่อตลาดไม่ได้ ({st['_error']}) · agent ยังทำงานของมันเองได้ แต่ตรวจสถานะไม่ได้"})
+    else:
+        rnd = st.get("round") or {}
+        lots = st.get("lots", [])
+        total, left = sum(x["kg_total"] for x in lots), sum(x["kg_remaining"] for x in lots)
+        out.update(market=st.get("market"), phase=st.get("phase"), seconds_left=st.get("seconds_left"), paused=st.get("paused"),
+                   round_id=rnd.get("round_id"), round_no=rnd.get("number"), rounds_of=rnd.get("of"), round_kind=rnd.get("kind"),
+                   calendar_label=rnd.get("calendar"), appraisal_submitted=st.get("appraisal_submitted"), team_id=st.get("team_id"),
+                   kg_total=total, kg_left=left, standings=st.get("standings"))
+        if st.get("phase") in ("ROUND_OPEN", "ROUND_CLEARING", "CLOSED") and st.get("appraisal_submitted") is False:
+            alerts.append({"level": "bad", "text": "ยังไม่ได้ส่งผลประเมิน (appraisal)! ไม่ส่ง = 0 จาก 20 คะแนน · ตรวจว่า agent รันอยู่"})
+        is_sandbox = st.get("market") == "sandbox"
+        if out["profile"] == "competition" and is_sandbox:
+            alerts.append({"level": "bad", "text": "เลือก key แข่งอยู่ แต่ตลาดที่ต่อเป็น sandbox · ตรวจ Market URL"})
+        if out["profile"] == "practice" and not is_sandbox:
+            alerts.append({"level": "bad", "text": "ใช้ key ฝึก แต่ตลาดที่ต่อไม่ใช่ sandbox · ตรวจ key/URL ให้ตรงกับตลาดที่จะแข่ง"})
+        if st.get("phase") == "ROUND_OPEN" and (rnd.get("number") or 0) >= 8 and total and left / total > 0.5:
+            alerts.append({"level": "warn", "text": "ผ่านครึ่งเกมแล้วของเหลือ > 50% · ตรวจว่าเหลือเป็นล็อตที่ขายไม่ได้เลยหรือยัง (ถ้าใช่ ไม่ต้องทำอะไร)"})
+    cal = _market_get("/v1/calendar", 60.0)
+    if "_error" not in cal:
+        out["calendar"] = cal.get("calendar", [])
+    lb = _market_get("/v1/leaderboard", 10.0)
+    if "_error" not in lb and isinstance(lb.get("ranking"), list):
+        tid = out.get("team_id") or "T26"
+        me = next((x for x in lb["ranking"] if x.get("team_id") == tid), None)
+        out["rank"] = me["rank"] if me else None
+        out["teams"] = len(lb["ranking"])
+        out["lb_frozen"] = lb.get("frozen")
+    try:
+        sm = _summary_mod()
+        import glob as _g
+        files = _g.glob(str(STARTER / "logs" / "memory-*.json"))
+        if files:
+            mem = json.loads(Path(max(files, key=os.path.getmtime)).read_text(encoding="utf-8"))
+            by_type, best, rows = sm.analyze(mem)
+            adv = sm.type_alerts(by_type)
+            for t, c in sorted(by_type.items()):
+                n = sum(c.values())
+                out["types"].append({"type": t, "n": n, "sold": sum(c[x] for x in sm.SOLD), "outbid": c["OUTBID"], "over": c["ABOVE_LIMIT"],
+                                     "spec": c["SPEC_MISMATCH"], "best": best.get(t), "advice": adv.get(t, "")})
+            out["rows"] = [{"round": r[0], "kind": r[1], "n": r[2], "kg_sent": r[3], "kg_sold": r[4], "status": r[5], "markup": r[6]} for r in rows]
+            for a in adv.values():
+                alerts.append({"level": "warn", "text": a})
+        z = sm.zero_rounds()
+        if z:
+            alerts.append({"level": "bad", "text": "รอบที่ส่ง 0 ซอง / ROUND_CLOSED: " + ", ".join(z) + " · ดู log หาเหตุ"})
+        n_sent, n_fail = sm.llm_stats()
+        out["llm"] = {"sent": n_sent, "fail": n_fail}
+        if n_sent >= 4 and n_fail / n_sent > 0.25:
+            alerts.append({"level": "warn", "text": f"LLM หลุด {n_fail}/{n_sent} รอบ (> 25%) · agent ใช้กฎเองอยู่ ไม่เสียรอบ · ห้ามสลับไป LLM อื่น"})
+    except Exception as e:                      # noqa: BLE001  ตัวชี้วัดพัง ไม่ให้กระทบหน้าอื่น
+        out["metrics_error"] = repr(e)[:160]
+    return out
+
+
 def read_events(after: int, run: str) -> dict:
     if not EVENTS.exists():
         return {"run": "", "events": []}
@@ -270,6 +364,8 @@ class Handler(BaseHTTPRequestHandler):
             q = parse_qs(u.query)
             data = read_events(int(q.get("after", ["0"])[0]), q.get("run", [""])[0])
             self._send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+        elif u.path == "/api/metrics":
+            self._json(metrics())
         elif u.path == "/api/control/status":
             if not self._trusted():
                 return self._send(403, b"forbidden", "text/plain")

@@ -177,9 +177,59 @@ details.ctl-log summary { cursor: pointer; color: var(--ink-3); font-size: 12.5p
   .chipbox { width: 120px; height: 120px; }
   .panels { grid-template-columns: 1fr; }
 }
+
+/* ---------- [T26] มุมมอง: ระหว่างแข่ง / วิเคราะห์ / เวที ---------- */
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.tabs button { font: inherit; font-size: 14px; font-weight: 600; padding: 7px 16px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.tabs button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.tabs .sp { flex: 1; }
+.statusbar { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 10px 14px; margin-bottom: 12px; }
+.mbadge { padding: 6px 14px; border-radius: 10px; font-weight: 700; font-size: 15px; background: var(--surface-2); color: var(--ink-2); }
+.mbadge.practice { background: var(--warn-soft); color: var(--warn); }
+.mbadge.comp { background: var(--violet); color: #fff; }
+.mbadge.warn { background: var(--bad-soft); color: var(--bad); }
+.mcell small { display: block; color: var(--ink-3); font-size: 11.5px; }
+.mcell b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.mcell b.bad { color: var(--bad); } .mcell b.warn { color: var(--warn); } .mcell b.ok { color: var(--ok); }
+.race-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.al { padding: 8px 12px; border-radius: 10px; margin: 6px 0; font-size: 13.5px; background: var(--surface-2); }
+.al.bad { background: var(--bad-soft); color: var(--bad); font-weight: 600; }
+.al.warn { background: var(--warn-soft); color: var(--warn); }
+.cal { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.cal span { min-width: 40px; padding: 4px 6px; border-radius: 8px; text-align: center; font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); }
+.cal span small { display: block; font-size: 10.5px; color: var(--ink-3); }
+.cal span.fest { background: var(--warn-soft); border-color: var(--warn); }
+.cal span.end { background: var(--bad-soft); }
+.cal span.cur { outline: 3px solid var(--brand); font-weight: 700; }
+.cal span.past { opacity: .5; }
+.rbars { display: flex; gap: 6px; align-items: flex-end; height: 150px; border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+.rbars > div { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; font-size: 11px; color: var(--ink-3); }
+.rbars .col { width: 100%; flex: 1; display: flex; align-items: flex-end; }
+.rbars .col i { display: block; width: 100%; background: var(--brand); border-radius: 4px 4px 0 0; }
+.rbars .col i.prac { background: var(--ink-3); opacity: .5; }
+.rbars em { font-style: normal; }
+#stageView { display: none; padding: 8px 4px; }
+.stage-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.stage-team { font-size: clamp(22px, 3.2vw, 40px); font-weight: 700; }
+.stage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin: 18px 0; }
+.stage-card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px 22px; box-shadow: var(--shadow); }
+.stage-card small { display: block; color: var(--ink-3); font-size: clamp(14px, 1.5vw, 20px); }
+.stage-card b { display: block; font-size: clamp(36px, 6vw, 84px); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stage-card b span { font-size: .4em; color: var(--ink-3); font-weight: 400; }
+.stage-last, .stage-reason { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px 22px; font-size: clamp(18px, 2.2vw, 30px); line-height: 1.5; margin-bottom: 16px; }
+.stage-reason small { display: block; color: var(--ink-3); font-size: .55em; }
+body[data-view="race"] .hub, body[data-view="race"] .panels { display: none; }
+body[data-view="analysis"] #raceView { display: none; }
+body[data-view="stage"] header, body[data-view="stage"] .tabs, body[data-view="stage"] #statusbar, body[data-view="stage"] #ctl,
+body[data-view="stage"] #raceView, body[data-view="stage"] .hub, body[data-view="stage"] .panels { display: none; }
+body[data-view="stage"] #stageView { display: block; }
+details.adv > summary { cursor: pointer; font-size: 12.5px; color: var(--brand); font-weight: 600; margin-top: 8px; }
+@media (max-width: 900px) { .race-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
-<body>
+<body data-view="race">
 <div class="wrap">
   <header>
     <h1>AI Agent <small>ตลาดเมล็ดกาแฟ · ดูการทำงานสด</small></h1>
@@ -191,6 +241,24 @@ details.ctl-log summary { cursor: pointer; color: var(--ink-3); font-size: 12.5p
       <button class="theme" id="themeBtn" title="สลับโหมดสว่าง/มืด">◐</button>
     </div>
   </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-v="race" class="on">ระหว่างแข่ง</button>
+    <button data-v="analysis">วิเคราะห์ (7 ขั้น)</button>
+    <button data-v="stage">เวที (หน้าจอใหญ่)</button>
+    <span class="sp"></span>
+    <button id="bExport" title="คัดลอกสรุปผลเป็นข้อความ (Markdown) ไปวางในสไลด์/เอกสาร">คัดลอกสรุป</button>
+  </nav>
+
+  <div class="statusbar" id="statusbar">
+    <div class="mbadge" id="mBadge">ตลาด: กำลังตรวจ</div>
+    <div class="mcell"><small>รอบ</small><b id="mRound">-</b></div>
+    <div class="mcell"><small>ผลประเมิน (appraisal)</small><b id="mAppr">-</b></div>
+    <div class="mcell"><small>ของเหลือ</small><b id="mLeft">-</b></div>
+    <div class="mcell"><small>LLM หลุด</small><b id="mLlm">-</b></div>
+    <div class="mcell"><small>agent</small><b id="mAgent">-</b></div>
+    <div class="mcell"><small>อันดับ</small><b id="mRank">-</b></div>
+  </div>
 
   <section class="ctl" id="ctl">
     <div class="ctl-top">
@@ -220,12 +288,14 @@ details.ctl-log summary { cursor: pointer; color: var(--ink-3); font-size: 12.5p
             <option value="hybrid">กฎ + LLM ประสาน · กฎทำแผน LLM ปรับราคารายผู้ซื้อ ±0.02 (LLM พลาด = ใช้กฎ)</option>
             <option value="llm">LLM ล้วน · ใช้แผนของ LLM อย่างเดียว (ทดลอง)</option>
           </select></label>
+        <details class="adv llm-only" id="advBox"><summary>ขั้นสูง: ที่อยู่ gateway · model · timeout · LLM key</summary>
         <label class="llm-only">LLM Base URL (ที่อยู่ gateway ที่ทีมงานแจ้ง)<input id="fLUrl" placeholder="http://x.x.x.x:4000/v1" autocomplete="off" spellcheck="false"></label>
         <div class="row2 llm-only">
           <label>Model<input id="fModel" placeholder="event-llm" autocomplete="off" spellcheck="false"></label>
           <label>Timeout / วินาที<input id="fTmo" inputmode="numeric" placeholder="60" autocomplete="off"></label>
         </div>
         <label class="llm-only">LLM API KEY<input id="fLKey" type="password" placeholder="เว้นว่าง = ใช้ Team KEY (gateway ใช้ key เดียวกับตลาด)" autocomplete="new-password" data-lpignore="true" spellcheck="false"></label>
+        </details>
         <details class="tune llm-only" id="tuneBox"><summary>ปรับจูน LLM</summary>
           <div class="row3">
             <label title="0 = ตอบเหมือนเดิมทุกครั้ง · สูง = หลากหลาย/มั่วขึ้น">Temperature (0–1.5)<input id="fTemp" inputmode="decimal" placeholder="0.7" autocomplete="off"></label>
@@ -252,6 +322,30 @@ details.ctl-log summary { cursor: pointer; color: var(--ink-3); font-size: 12.5p
     <div class="ctl-msg" id="cMsg"></div>
     <pre class="console" id="cCheck"></pre>
     <details class="ctl-log" id="cLogBox"><summary>ข้อความจาก agent (log)</summary><pre class="console" id="cLog"></pre></details>
+  </section>
+
+  <section id="raceView">
+    <div class="panel wide" style="margin-bottom:16px"><h2>ข้อควรดู</h2>
+      <p class="why">เตือนจากตัวชี้วัดในแผนวันที่ 20 (ไม่ต้องรัน summary.py) · ปรับ START ได้เฉพาะช่วงซ้อม P1–P2 และต้องสั่งทีละครั้ง</p>
+      <div id="alertBox"><div class="empty">กำลังตรวจ</div></div></div>
+    <div class="race-grid">
+      <div class="panel"><h2>ปฏิทินตลาด</h2><p class="why">น้ำหนักความต้องการซื้อต่อรอบ · เหลือง = เทศกาล (Specialty ต้องการมาก) · แดง = ใกล้ปิดตลาด</p><div id="calBox"><div class="empty">ยังไม่มีข้อมูล</div></div></div>
+      <div class="panel"><h2>ผลรายรอบ</h2><p class="why">แท่ง = กก. ที่ขายได้ · ตัวเลขใต้แท่ง = ราคาเฉลี่ยเทียบ TV ของส่วนที่ขายได้ · เทา = รอบซ้อม</p><div id="roundBox"><div class="empty">ยังไม่มีข้อมูล</div></div></div>
+      <div class="panel wide"><h2>ผลต่อประเภทผู้ซื้อ</h2><p class="why">ใช้ตัดสินปรับ START หลังซ้อม P1: ขายได้ ≥ 85% → +0.02 · OUTBID &gt; 40% → −0.02 · เกินเพดาน &gt; 10% → −0.03 (ต้องมีซองอย่างน้อย 6)</p><div class="scroll" id="typeBox"><div class="empty">ยังไม่มีข้อมูล</div></div></div>
+    </div>
+  </section>
+
+  <section id="stageView">
+    <div class="stage-top"><div class="stage-team" id="stTeam">-</div><button class="btn" id="stageExit">ออก (Esc)</button></div>
+    <div class="stage-grid">
+      <div class="stage-card"><small>อันดับ</small><b id="stRank">-</b></div>
+      <div class="stage-card"><small>รอบ</small><b id="stRound">-</b></div>
+      <div class="stage-card"><small>รายได้ (บาท)</small><b id="stRev">-</b></div>
+      <div class="stage-card"><small>ราคาเฉลี่ย (บาท/กก.)</small><b id="stAvg">-</b></div>
+      <div class="stage-card"><small>ขายแล้ว</small><b id="stSold">-</b></div>
+    </div>
+    <div class="stage-last" id="stLast">-</div>
+    <div class="stage-reason" id="stReason"><small>agent คิดอย่างไร</small>-</div>
   </section>
 
   <section class="hub" id="hub">
@@ -413,7 +507,7 @@ const R = {
       ${d.held.length ? `<div class="muted" style="margin-top:8px">ยังไม่ขาย: ${d.held.map(esc).join(", ")}</div>` : ""}`;
   },
   llm(e) {
-    const d = e.data; S.llm = S.llm || []; S.llm.push({ round: e.round, ok: d.ok, sec: d.seconds, used: d.used, n: d.offers.length, skipped: d.skipped });
+    const d = e.data; S.lastReason = d.reason || null; S.llm = S.llm || []; S.llm.push({ round: e.round, ok: d.ok, sec: d.seconds, used: d.used, n: d.offers.length, skipped: d.skipped });
     const okN = S.llm.filter(x => x.ok).length, secs = S.llm.filter(x => x.sec != null).map(x => x.sec);
     const avg = secs.length ? secs.reduce((a, b) => a + b, 0) / secs.length : null;
     const MODE_TH = { hybrid: "กฎ + LLM", llm: "LLM ล้วน" };
@@ -590,6 +684,7 @@ function renderCtl() {
   $("fHist").placeholder = c.llm_history || "3";
   if (document.activeElement !== $("fThink") && !THINK_DIRTY) $("fThink").value = c.llm_thinking === "1" ? "1" : "0";
   if (document.activeElement !== $("fExtra") && !EXTRA_DIRTY) $("fExtra").value = c.llm_extra || "";
+  $("pSen").style.display = c.pi_enabled ? "" : "none"; $("cPi").parentElement.style.display = c.pi_enabled ? "" : "none";
   $("bStart").disabled = $("bPractice").disabled = run; $("bStop").disabled = !run;
   if (c.key_profile === "competition") { $("bPractice").disabled = true; $("bPractice").title = "ปิดไว้: key แข่งใช้โหมดซ้อมไม่ได้"; }
   $("bSave").disabled = run;
@@ -654,6 +749,103 @@ $("bStop").onclick = async () => {
   finally { busy(false); }
 };
 ctlPoll();
+
+// ---------------- [T26] มุมมอง + ตัวชี้วัดสด ----------------
+let M = {};
+function setView(v) {
+  document.body.dataset.view = v;
+  document.querySelectorAll("#tabs button[data-v]").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  try { localStorage.setItem("view", v); } catch (e) {}
+  if (v === "analysis") setTimeout(() => drawLinks(ACTIVE), 60);
+}
+document.querySelectorAll("#tabs button[data-v]").forEach(b => b.onclick = () => setView(b.dataset.v));
+$("stageExit").onclick = () => setView("race");
+document.addEventListener("keydown", e => { if (e.key === "Escape" && document.body.dataset.view === "stage") setView("race"); });
+try { const v = localStorage.getItem("view"); if (v === "analysis" || v === "race") setView(v); } catch (e) {}
+
+function inCompWindow() { const n = new Date(); return n >= new Date(2026, 10, 20, 9, 0) && n < new Date(2026, 10, 20, 12, 0); }
+function clientAlerts() {
+  const a = [], run = CTL.running || CTL.external, live = ["SETUP", "APPRAISAL", "ROUND_OPEN"].includes(M.phase);
+  if (inCompWindow() && (M.profile === "practice" || M.market === "sandbox"))
+    a.push({ level: "bad", text: "ตอนนี้อยู่ในเวลาแข่ง (20 พ.ย. 09:00–12:00) แต่ใช้ key/ตลาดซ้อม · เปลี่ยนเป็น key แข่งในแผงควบคุม" });
+  if (live && !run && M.market && M.market !== "sandbox")
+    a.push({ level: "bad", text: "ตลาดกำลังเปิดแต่ agent ไม่ได้รัน! กด ② เริ่มแข่ง (รอบที่พลาดไม่ได้คืน)" });
+  return a;
+}
+function renderMetrics() {
+  const badge = $("mBadge"), sandbox = M.market === "sandbox";
+  if (M.market_error) { badge.className = "mbadge warn"; badge.textContent = "ต่อตลาดไม่ได้"; }
+  else if (M.market) { badge.className = "mbadge " + (sandbox ? "practice" : "comp");
+    badge.textContent = sandbox ? "🧪 ตลาดซ้อม (sandbox)" : "🏁 ตลาดแข่ง"; }
+  const run = CTL.running || CTL.external;
+  $("mRound").textContent = M.round_id ? `${M.round_id}${M.rounds_of ? "/" + M.rounds_of : ""} · ${M.phase}${M.seconds_left != null ? " · " + Math.round(M.seconds_left) + " วิ" : ""}${M.paused ? " (หยุดชั่วคราว)" : ""}` : "-";
+  const ap = $("mAppr");
+  if (M.appraisal_submitted === true) { ap.textContent = "✅ ส่งแล้ว"; ap.className = "ok"; }
+  else if (M.appraisal_submitted === false) { const wait = ["SETUP", "APPRAISAL", "WAITING"].includes(M.phase);
+    ap.textContent = wait ? "⏳ รอส่ง (agent ส่งเอง)" : "❌ ยังไม่ส่ง"; ap.className = wait ? "warn" : "bad"; }
+  else { ap.textContent = "-"; ap.className = ""; }
+  $("mLeft").textContent = M.kg_total ? `${fmt(100 * M.kg_left / M.kg_total)}% (${fmt(M.kg_left)}/${fmt(M.kg_total)} กก.)` : "-";
+  const l = M.llm || { sent: 0, fail: 0 }, lb = $("mLlm");
+  lb.textContent = `${l.fail}/${l.sent} รอบ`; lb.className = l.sent >= 4 && l.fail / l.sent > 0.25 ? "warn" : "";
+  const ag = $("mAgent"); ag.textContent = run ? "● รันอยู่" : "○ หยุด"; ag.className = run ? "ok" : (M.market && !sandbox && ["SETUP", "APPRAISAL", "ROUND_OPEN"].includes(M.phase) ? "bad" : "");
+  $("mRank").textContent = M.rank ? `#${M.rank} / ${M.teams}${M.lb_frozen ? " (หยุดอัปเดต)" : ""}` : "-";
+
+  const al = [...clientAlerts(), ...(M.alerts || [])];
+  $("alertBox").innerHTML = al.length ? al.map(x => `<div class="al ${esc(x.level)}">${esc(x.text)}</div>`).join("") : '<div class="al">ไม่มีข้อควรดู ✅</div>';
+
+  // ปฏิทิน
+  const of = M.rounds_of || 0, cur = M.round_no || 0, cal = M.calendar || [];
+  const wOf = r => cal.find(c => { const [a, b] = String(c.rounds).split("-").map(Number); return r >= a && r <= (b || a); });
+  $("calBox").innerHTML = !of || !cal.length ? '<div class="empty">ยังไม่มีข้อมูล</div>' :
+    `<div class="cal">${Array.from({ length: of }, (_, i) => i + 1).map(r => { const c = wOf(r) || {};
+      const cls = /เทศกาล/.test(c.label || "") ? "fest" : /ใกล้ปิด|สุดท้าย/.test(c.label || "") ? "end" : "";
+      return `<span class="${cls} ${r === cur ? "cur" : r < cur ? "past" : ""}" title="${esc(c.label)}">R${r}<small>×${c.demand_weight ?? "-"}</small></span>`; }).join("")}</div>
+     <div class="muted" style="font-size:12px">${cal.map(c => `R${esc(c.rounds)} ${esc(c.label)} ×${c.demand_weight}${c.specialty_share != null ? " (Specialty " + c.specialty_share + ")" : ""}`).join(" · ")}</div>`;
+
+  // รายรอบ
+  const rows = M.rows || [], mx = Math.max(1, ...rows.map(r => r.kg_sent));
+  $("roundBox").innerHTML = !rows.length ? '<div class="empty">ยังไม่มีข้อมูลรอบ</div>' :
+    `<div class="rbars">${rows.map(r => `<div title="${esc(r.round)}: ยื่น ${r.kg_sent} กก. ขาย ${r.kg_sold} กก. ${esc(JSON.stringify(r.status))}">
+      <div class="col"><i class="${r.kind === "practice" ? "prac" : ""}" style="height:${100 * r.kg_sold / mx}%"></i></div>
+      <span>${esc(r.round)}</span><em>${r.markup ? "×" + fmt(r.markup, 2) : "-"}</em></div>`).join("")}</div>`;
+
+  // ประเภทผู้ซื้อ
+  const pc = (a, b) => b ? fmt(100 * a / b) + "%" : "-";
+  $("typeBox").innerHTML = !(M.types || []).length ? '<div class="empty">ยังไม่มีผลต่อผู้ซื้อ</div>' :
+    `<table><tr><th>ประเภท</th><th class="num">ซอง</th><th class="num">ขายได้</th><th class="num">OUTBID</th><th class="num">เกินเพดาน</th><th class="num">สเปกไม่ผ่าน</th><th class="num">ตัวคูณสูงสุดที่ขายได้</th><th>คำแนะนำ</th></tr>
+    ${M.types.map(t => `<tr><td><b>${esc(t.type)}</b></td><td class="num">${t.n}</td><td class="num">${pc(t.sold, t.n)}</td><td class="num">${pc(t.outbid, t.n)}</td>
+      <td class="num">${pc(t.over, t.n)}</td><td class="num">${pc(t.spec, t.n)}</td><td class="num">${t.best ? fmt(t.best, 2) : "-"}</td>
+      <td>${t.advice ? `<span class="tag warn">${esc(t.advice)}</span>` : t.n < 6 ? '<span class="muted">ข้อมูลยังน้อย</span>' : '<span class="tag ok">ไม่ต้องแตะ</span>'}</td></tr>`).join("")}</table>`;
+
+  // เวที
+  const sd = M.standings || {}, last = rows.filter(r => r.kind !== "practice").slice(-1)[0] || rows.slice(-1)[0];
+  $("stTeam").textContent = (S.meta && S.meta.team ? S.meta.team : (M.team_id || "-")) + " · " + (sandbox ? "ตลาดซ้อม" : "ตลาดแข่ง");
+  $("stRank").innerHTML = M.rank ? `#${M.rank}<span> / ${M.teams}</span>` : "-";
+  $("stRound").innerHTML = M.round_no ? `${M.round_no}<span> / ${M.rounds_of}</span>` : "-";
+  $("stRev").textContent = sd.revenue_thb != null ? fmt(sd.revenue_thb) : "-";
+  $("stAvg").textContent = sd.avg_price_per_kg != null ? fmt(sd.avg_price_per_kg, 2) : "-";
+  $("stSold").innerHTML = sd.kg_total ? `${fmt(100 * sd.kg_sold / sd.kg_total)}%<span> ${fmt(sd.kg_sold)}/${fmt(sd.kg_total)} กก.</span>` : "-";
+  $("stLast").textContent = last ? `รอบ ${last.round}: ยื่น ${fmt(last.kg_sent)} กก. ขายได้ ${fmt(last.kg_sold)} กก.${last.markup ? " ที่ราคาเฉลี่ย ×" + fmt(last.markup, 2) + " ของมูลค่า" : ""}` : "ยังไม่มีผลรอบ";
+  $("stReason").innerHTML = `<small>agent คิดอย่างไร</small>${esc(S.lastReason || "agent ใช้กฎขั้นบันไดตามประเภทผู้ซื้อ: ราคา = ตัวคูณ × มูลค่าที่ประเมิน · ขายได้ → ขยับขึ้น 0.01 · ถูกแย่งราคา → ถอยลง · เกินเพดานผู้ซื้อ → ลดและไม่ชนเพดานเดิม")}`;
+}
+async function mPoll() {
+  try { M = await (await fetch("/api/metrics", { cache: "no-store" })).json(); renderMetrics(); } catch (e) { /* dashboard เองไม่ตอบ: ข้ามรอบนี้ */ }
+  setTimeout(mPoll, 2500);
+}
+$("bExport").onclick = async () => {
+  const rows = M.rows || [], sd = M.standings || {};
+  const md = [`# สรุปผล agent ทีม ${M.team_id || "T26"}`, `เวลา ${new Date().toLocaleString("th-TH")} · ${M.market === "sandbox" ? "ตลาดซ้อม (sandbox)" : "ตลาดแข่ง"}`, "",
+    `- รอบ: ${M.round_id || "-"}/${M.rounds_of || "-"} · ช่วง ${M.phase || "-"}`, `- อันดับ: ${M.rank ? "#" + M.rank + "/" + M.teams : "-"}`,
+    `- รายได้: ${sd.revenue_thb != null ? fmt(sd.revenue_thb) + " บาท" : "-"} · ขายแล้ว ${sd.kg_sold != null ? fmt(sd.kg_sold) + "/" + fmt(sd.kg_total) + " กก." : "-"} · ราคาเฉลี่ย ${sd.avg_price_per_kg != null ? fmt(sd.avg_price_per_kg, 2) : "-"} บาท/กก.`,
+    `- LLM หลุด: ${(M.llm || {}).fail || 0}/${(M.llm || {}).sent || 0} รอบ`, "", "## รายรอบ", "| รอบ | ยื่น กก. | ขาย กก. | ราคา÷TV เฉลี่ย |", "|---|---|---|---|",
+    ...rows.map(r => `| ${r.round}${r.kind === "practice" ? " (ซ้อม)" : ""} | ${r.kg_sent} | ${r.kg_sold} | ${r.markup ?? "-"} |`), "", "## ประเภทผู้ซื้อ",
+    "| ประเภท | ซอง | ขายได้ | OUTBID | เกินเพดาน |", "|---|---|---|---|---|",
+    ...(M.types || []).map(t => `| ${t.type} | ${t.n} | ${t.sold} | ${t.outbid} | ${t.over} |`)].join("\n");
+  try { await navigator.clipboard.writeText(md); $("bExport").textContent = "คัดลอกแล้ว ✓"; }
+  catch (e) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" })); a.download = "t26-summary.md"; a.click(); $("bExport").textContent = "ดาวน์โหลดแล้ว ✓"; }
+  setTimeout(() => $("bExport").textContent = "คัดลอกสรุป", 2000);
+};
+mPoll();
 </script>
 </body>
 </html>

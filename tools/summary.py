@@ -54,11 +54,9 @@ def llm_stats() -> tuple[int, int]:
     return len(sent), sum("ไม่ตอบ" in str(r.get("source", "")) for r in sent)
 
 
-def main() -> None:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    path, mem = load_memory(args[0] if args else None)
-    print(f"ไฟล์ความจำ: {os.path.relpath(path, HERE)}\n")
-
+def analyze(mem: dict) -> tuple[dict, dict, list]:
+    """[T26] รวมผลทุกรอบจากไฟล์ความจำ -> (ประเภทผู้ซื้อ -> สถานะ -> จำนวนซอง, ประเภท -> ตัวคูณสูงสุดที่ขายได้,
+    รายรอบ [(round_id, kind, ซอง, กก.ยื่น, กก.ขาย, {สถานะ: จำนวน}, ตัวคูณเฉลี่ยของส่วนที่ขายได้)])  ใช้ร่วมกับ dashboard"""
     by_type = defaultdict(lambda: defaultdict(int))        # ประเภท -> สถานะ -> จำนวนซอง
     best = {}                                              # ประเภท -> ตัวคูณสูงสุดที่ขายได้
     rows = []
@@ -67,6 +65,7 @@ def main() -> None:
         sent = {(s["rfq_id"], s["lot_id"], round(s["price_per_kg"], 2)): s for s in mem["sent"].get(rid, [])}
         st = defaultdict(int)
         kg_sent = kg_sold = 0
+        mk_sum = 0.0
         for o in rnd.get("my_offers", []):
             s = sent.get((o["rfq_id"], o["lot_id"], round(o["price_per_kg"], 2)))
             t = (s or {}).get("buyer_type", "ไม่ทราบ")   # ไม่ทราบ = ซองที่ส่งก่อน agent รีสตาร์ท (ไม่มีบันทึกการส่งในไฟล์นี้)
@@ -76,11 +75,38 @@ def main() -> None:
             kg_sold += o.get("filled_kg") or 0
             if o["status"] in SOLD and s and s.get("markup"):
                 best[t] = max(best.get(t, 0), s["markup"])
-        rows.append((rid, rnd.get("kind", ""), len(rnd.get("my_offers", [])), kg_sent, kg_sold, dict(st)))
+                mk_sum += s["markup"] * (o.get("filled_kg") or 0)
+        rows.append((rid, rnd.get("kind", ""), len(rnd.get("my_offers", [])), kg_sent, kg_sold, dict(st),
+                     round(mk_sum / kg_sold, 3) if kg_sold and mk_sum else None))
+    return by_type, best, rows
 
+
+def type_alerts(by_type: dict) -> dict:
+    """[T26] ประเภทผู้ซื้อ -> คำแนะนำปรับ START ตามเกณฑ์ในแผน (ซอง >= 6)"""
+    out = {}
+    for t, c in by_type.items():
+        n = sum(c.values())
+        if n < 6:
+            continue
+        sold, o, ov = sum(c[s] for s in SOLD), c["OUTBID"], c["ABOVE_LIMIT"]
+        if o / n > 0.40:
+            out[t] = f"{t}: OUTBID {pct(o, n).strip()} > 40% → พิจารณาลด START −0.02"
+        if ov / n > 0.10:
+            out[t] = f"{t}: เกินเพดาน {pct(ov, n).strip()} > 10% → พิจารณาลด START −0.03"
+        if sold / n >= 0.85:
+            out[t] = f"{t}: ขายได้ {pct(sold, n).strip()} ≥ 85% → อาจทิ้งเงิน พิจารณาขึ้น START +0.02 (ดูว่าขายที่ราคาบนสุดไหม)"
+    return out
+
+
+def main() -> None:
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    path, mem = load_memory(args[0] if args else None)
+    print(f"ไฟล์ความจำ: {os.path.relpath(path, HERE)}\n")
+
+    by_type, best, rows = analyze(mem)
     print("รายรอบ")
     print(f"{'รอบ':5s} {'ซอง':>4s} {'ยื่น กก.':>8s} {'ขาย กก.':>8s}  สถานะ")
-    for rid, kind, n, ks, kd, st in rows:
+    for rid, kind, n, ks, kd, st, _ in rows:
         tag = " (ซ้อม)" if kind == "practice" else ""
         print(f"{rid:5s} {n:4d} {ks:8d} {kd:8d}  {st}{tag}")
 
