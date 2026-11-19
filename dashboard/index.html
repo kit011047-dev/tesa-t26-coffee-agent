@@ -197,6 +197,11 @@ details.ctl-log summary { cursor: pointer; color: var(--ink-3); font-size: 12.5p
 .al { padding: 8px 12px; border-radius: 10px; margin: 6px 0; font-size: 13.5px; background: var(--surface-2); }
 .al.bad { background: var(--bad-soft); color: var(--bad); font-weight: 600; }
 .al.warn { background: var(--warn-soft); color: var(--warn); }
+.al.info { color: var(--ink-3); }
+.ck { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 6px 14px; }
+.ck div { font-size: 13.5px; padding: 4px 0; }
+.ck .no { color: var(--bad); font-weight: 600; } .ck .ok { color: var(--ok); } .ck .wait { color: var(--ink-3); }
+.ck small { display: block; font-weight: 400; color: var(--ink-3); }
 .cal { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .cal span { min-width: 40px; padding: 4px 6px; border-radius: 8px; text-align: center; font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); }
 .cal span small { display: block; font-size: 10.5px; color: var(--ink-3); }
@@ -325,6 +330,9 @@ details.adv > summary { cursor: pointer; font-size: 12.5px; color: var(--brand);
   </section>
 
   <section id="raceView">
+    <div class="panel wide" style="margin-bottom:16px"><h2>เช็กลิสต์ก่อน 09:30 <span id="ckCount" class="muted" style="font-size:13px"></span></h2>
+      <p class="why">ติ๊กเองจากสถานะจริง · ✅ ผ่าน · ❌ ต้องแก้ · ⏳ ยังไม่รู้ (ต้องกดปุ่มตรวจก่อน)</p>
+      <div class="ck" id="ckBox"><div class="empty">กำลังตรวจ</div></div></div>
     <div class="panel wide" style="margin-bottom:16px"><h2>ข้อควรดู</h2>
       <p class="why">เตือนจากตัวชี้วัดในแผนวันที่ 20 (ไม่ต้องรัน summary.py) · ปรับ START ได้เฉพาะช่วงซ้อม P1–P2 และต้องสั่งทีละครั้ง</p>
       <div id="alertBox"><div class="empty">กำลังตรวจ</div></div></div>
@@ -792,6 +800,11 @@ function renderMetrics() {
 
   const al = [...clientAlerts(), ...(M.alerts || [])];
   $("alertBox").innerHTML = al.length ? al.map(x => `<div class="al ${esc(x.level)}">${esc(x.text)}</div>`).join("") : '<div class="al">ไม่มีข้อควรดู ✅</div>';
+
+  const ck = M.checklist || [], okN = ck.filter(c => c.ok === true).length;
+  $("ckCount").textContent = ck.length ? `${okN}/${ck.length}` : "";
+  $("ckBox").innerHTML = ck.length ? ck.map(c => { const k = c.ok === true ? "ok" : c.ok === false ? "no" : "wait";
+    return `<div class="${k}">${k === "ok" ? "✅" : k === "no" ? "❌" : "⏳"} ${esc(c.text)}${c.ok === true ? "" : `<small>${esc(c.hint)}</small>`}</div>`; }).join("") : '<div class="empty">ยังไม่มีข้อมูล</div>';
 
   // ปฏิทิน
   const of = M.rounds_of || 0, cur = M.round_no || 0, cal = M.calendar || [];

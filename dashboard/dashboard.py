@@ -36,6 +36,8 @@ _started: float | None = None
 _stopped = False                                # หยุดเพราะผู้ใช้กดหยุด (ไม่ใช่ล่ม)
 _last_check = ""
 _last_llm = ""
+_check_ok = None                                # ผลตรวจความพร้อมล่าสุด (None = ยังไม่เคยกด)
+_llm_ok = None
 
 
 PROFILES = ("practice", "competition")          # [T26] คีย์ฝึก / คีย์แข่ง
@@ -188,23 +190,26 @@ def control_env(body: dict) -> dict:
 
 
 def control_check() -> dict:
-    global _last_check
+    global _last_check, _check_ok
     py = STARTER / ".venv" / "bin" / "python"
     r = subprocess.run([str(py), "tools/preflight.py"], cwd=STARTER, capture_output=True, text=True, timeout=40)
     _last_check = (r.stdout + r.stderr).strip()
+    _check_ok = r.returncode == 0
     return {"ok": r.returncode == 0, "msg": _last_check}
 
 
 def control_llm_test(body: dict) -> dict:
-    global _last_llm
+    global _last_llm, _llm_ok
     py = STARTER / ".venv" / "bin" / "python"
     args = [str(py), "tools/llm_try.py"] + (["--rules"] if body.get("rules") else [])
     try:
         r = subprocess.run(args, cwd=STARTER, capture_output=True, text=True, timeout=180)
         _last_llm = (r.stdout + r.stderr).strip()
+        _llm_ok = r.returncode == 0
         return {"ok": r.returncode == 0, "msg": _last_llm}
     except subprocess.TimeoutExpired:
         _last_llm = "❌ LLM ตอบช้าเกิน 180 วินาที"
+        _llm_ok = False
         return {"ok": False, "msg": _last_llm}
 
 
@@ -269,6 +274,24 @@ def _summary_mod():
     return m
 
 
+def checklist(env: dict, st: dict) -> list:
+    """เช็กลิสต์ก่อนแข่ง ติ๊กอัตโนมัติ · ok: True/False/None(ยังไม่รู้) · ข้อที่ต้องกดปุ่มก่อนถึงจะรู้ผลจะเป็น None"""
+    kc, uc = env.get("TEAM_KEY_COMPETITION", ""), env.get("MARKET_URL_COMPETITION", "")
+    live = "_error" not in st
+    comp_mkt = live and st.get("market") not in (None, "sandbox")
+    run = _running() or _external_agent()
+    return [
+        {"ok": bool(kc), "text": "บันทึก key แข่งแล้ว", "hint": "วางใน Team KEY โดยเลือกชนิด key แข่ง แล้วกดบันทึก"},
+        {"ok": bool(uc) and uc != env.get("MARKET_URL_PRACTICE", ""), "text": "ตั้ง Market URL ของตลาดแข่งแล้ว", "hint": "ผู้จัดจะแจ้งที่อยู่ตอนเปิดตลาด"},
+        {"ok": env.get("KEY_PROFILE") == "competition", "text": "เลือกชนิด key = แข่ง", "hint": "เลือกในแผงควบคุมแล้วกดบันทึก"},
+        {"ok": comp_mkt if live else None, "text": "ต่อตลาดแข่งได้จริง (ไม่ใช่ sandbox)", "hint": "ถ้าต่อไม่ได้ ตรวจ URL/เครือข่าย WiFi ชุมพร"},
+        {"ok": env.get("PI_ENABLED", "0") == "0", "text": "ปิดการใช้ข้อมูล Pi (PI_ENABLED=0)", "hint": "ข้อมูลเซนเซอร์ยังไม่ใช้ตั้งราคา"},
+        {"ok": _check_ok, "text": "ตรวจความพร้อมผ่าน (① ตรวจความพร้อม)", "hint": "กดปุ่ม ① ก่อน appraisal"},
+        {"ok": _llm_ok, "text": "ทดสอบ LLM gateway ตอบได้", "hint": "กดทดสอบ LLM ในส่วนขั้นสูง · key LLM ต้องตรงกับ key ของงาน"},
+        {"ok": run, "text": "agent รันอยู่ (② เริ่มแข่ง ไม่ใส่ --forever)", "hint": "กดหลังตรวจผ่าน ก่อนเปิด appraisal 09:40"},
+    ]
+
+
 def metrics() -> dict:
     env = _read_env()
     prof = env.get("KEY_PROFILE", "")
@@ -287,7 +310,10 @@ def metrics() -> dict:
                    calendar_label=rnd.get("calendar"), appraisal_submitted=st.get("appraisal_submitted"), team_id=st.get("team_id"),
                    kg_total=total, kg_left=left, standings=st.get("standings"))
         if st.get("phase") in ("ROUND_OPEN", "ROUND_CLEARING", "CLOSED") and st.get("appraisal_submitted") is False:
-            alerts.append({"level": "bad", "text": "ยังไม่ได้ส่งผลประเมิน (appraisal)! ไม่ส่ง = 0 จาก 20 คะแนน · ตรวจว่า agent รันอยู่"})
+            if st.get("market") == "sandbox" and not (_running() or _external_agent()):
+                alerts.append({"level": "info", "text": "ตลาดซ้อมเดินเกมของมันเอง (agent เราหยุดอยู่) จึงไม่มี appraisal · ไม่ใช่ปัญหา · ในตลาดแข่งข้อนี้จะเป็นสีแดง"})
+            else:
+                alerts.append({"level": "bad", "text": "ยังไม่ได้ส่งผลประเมิน (appraisal)! ไม่ส่ง = 0 จาก 20 คะแนน · ตรวจว่า agent รันอยู่"})
         is_sandbox = st.get("market") == "sandbox"
         if out["profile"] == "competition" and is_sandbox:
             alerts.append({"level": "bad", "text": "เลือก key แข่งอยู่ แต่ตลาดที่ต่อเป็น sandbox · ตรวจ Market URL"})
@@ -295,6 +321,7 @@ def metrics() -> dict:
             alerts.append({"level": "bad", "text": "ใช้ key ฝึก แต่ตลาดที่ต่อไม่ใช่ sandbox · ตรวจ key/URL ให้ตรงกับตลาดที่จะแข่ง"})
         if st.get("phase") == "ROUND_OPEN" and (rnd.get("number") or 0) >= 8 and total and left / total > 0.5:
             alerts.append({"level": "warn", "text": "ผ่านครึ่งเกมแล้วของเหลือ > 50% · ตรวจว่าเหลือเป็นล็อตที่ขายไม่ได้เลยหรือยัง (ถ้าใช่ ไม่ต้องทำอะไร)"})
+    out["checklist"] = checklist(env, st)
     cal = _market_get("/v1/calendar", 60.0)
     if "_error" not in cal:
         out["calendar"] = cal.get("calendar", [])
