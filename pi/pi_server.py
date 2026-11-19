@@ -16,6 +16,7 @@ Endpoint:
     GET /measure?lot_id=L01  วัดล็อตนี้ (field ไหนอ่านไม่ได้จะไม่ใส่ และบอกใน "missing")
     GET /esp32               บรรทัดล่าสุดจาก ESP32 (ไว้ debug)
     GET /lots                ผลวัดที่จำไว้ทั้งหมด
+    POST /track1             [T26] รับความชื้นจาก Mac ที่ต่อ ESP32: {lot_id, moisture_pct, device_id?, n_readings?} → เขียน {TRACK1_DIR}/{lot_id}.json
 """
 import glob
 import json
@@ -25,7 +26,10 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+import re
+from datetime import datetime, timezone
+
+from fastapi import Body, FastAPI, HTTPException
 
 MODE = os.environ.get("SENSOR_MODE", "fake")
 SERIAL_PORT = os.environ.get("SERIAL_PORT", "")          # ว่าง = หาเอง (/dev/serial/by-id/* → /dev/ttyACM0)
@@ -239,3 +243,26 @@ def measure(lot_id: str):
 @app.get("/lots")
 def lots():
     return _measured
+
+
+@app.post("/track1")
+def post_track1(body: dict = Body(...)):
+    """[T26] Mac ที่ต่อ ESP32 ส่งความชื้นเข้ามา → เขียนเป็นไฟล์ track1/<lot_id>.json (read_track1 อ่านต่อ) · ทับของเดิมของล็อตนั้น"""
+    lot_id = str(body.get("lot_id", "")).strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", lot_id):
+        raise HTTPException(422, "lot_id ว่างหรือมีอักขระไม่อนุญาต (ใช้ A-Z a-z 0-9 . _ - ไม่เกิน 64)")
+    try:
+        m = float(body["moisture_pct"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(422, "ต้องมี moisture_pct เป็นตัวเลข")
+    if not 0 < m < 100:
+        raise HTTPException(422, f"moisture_pct ผิดช่วง: {m}")
+    n = body.get("n_readings")
+    d = {"lot_id": lot_id, "moisture_pct": round(m, 2), "device_id": str(body.get("device_id") or "esp32")[:40],
+         "n_readings": int(n) if isinstance(n, (int, float)) else None,
+         "timestamp": body.get("timestamp") or datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")}
+    TRACK1_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = TRACK1_DIR / f".{lot_id}.tmp"
+    tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(TRACK1_DIR / f"{lot_id}.json")               # เขียนครั้งเดียวจบ ไม่ให้ GET /measure อ่านไฟล์ครึ่ง ๆ
+    return {"ok": True, "saved": d}
