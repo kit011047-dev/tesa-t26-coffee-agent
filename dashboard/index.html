@@ -65,6 +65,22 @@
 :root[data-theme="neon"] .rounds span { background: rgba(14,26,54,.8); border-color: var(--line); }
 :root[data-theme="neon"] .rounds span.done { background: var(--ok-soft); color: var(--ok); border-color: rgba(61,245,176,.5); box-shadow: 0 0 8px rgba(61,245,176,.35); }
 :root[data-theme="neon"] .summary .big { text-shadow: 0 0 12px var(--brand-glow); }
+/* ไทม์ไลน์รอบ */
+.tl { display: flex; align-items: flex-start; overflow-x: auto; padding: 6px 2px 4px; }
+.tl .st { flex: 1 0 54px; position: relative; text-align: center; min-width: 54px; }
+.tl .st::before { content: ""; position: absolute; top: 13px; left: -50%; width: 100%; height: 3px; background: var(--line); z-index: 0; }
+.tl .st:first-child::before { display: none; }
+.tl .st.done::before, .tl .st.cur::before { background: var(--brand); }
+.tl .st i { position: relative; z-index: 1; display: grid; place-items: center; width: 28px; height: 28px; margin: 0 auto; border-radius: 50%;
+  background: var(--surface-2); border: 2px solid var(--line); color: var(--ink-3); font: 600 11px var(--font); font-style: normal; }
+.tl .st.ok i { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.tl .st.part i { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.tl .st.miss i { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.tl .st.prac i { border-style: dashed; }
+.tl .st.cur i { border-color: var(--brand); color: var(--brand); box-shadow: 0 0 0 4px var(--brand-glow); animation: pulse 1.6s ease-out infinite; }
+.tl .st em { display: block; font-style: normal; font-size: 11px; margin-top: 4px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.tl .st small { display: block; font-size: 10px; color: var(--ink-3); }
+.tl .st.fest i { box-shadow: 0 0 0 3px var(--warn-soft); }
 * { box-sizing: border-box; }
 body { margin: 0; font-family: var(--font); color: var(--ink); font-size: 14px;
   background: radial-gradient(1200px 600px at 80% -10%, var(--bg2), transparent), var(--bg); min-height: 100vh; }
@@ -373,6 +389,9 @@ details.adv > summary { cursor: pointer; font-size: 12.5px; color: var(--brand);
     <div class="panel wide" style="margin-bottom:16px"><h2>ข้อควรดู</h2>
       <p class="why">เตือนจากตัวชี้วัดในแผนวันที่ 20 (ไม่ต้องรัน summary.py) · ปรับ START ได้เฉพาะช่วงซ้อม P1–P2 และต้องสั่งทีละครั้ง</p>
       <div id="alertBox"><div class="empty">กำลังตรวจ</div></div></div>
+    <div class="panel wide" style="margin-bottom:16px"><h2>ไทม์ไลน์รอบ</h2>
+      <p class="why">เขียว = ขายได้ ≥ 85% ของที่ยื่น · เหลือง = ขายบางส่วน · แดง = ยื่นแล้วขายไม่ได้ · เส้นประ = รอบซ้อม · วงเรือง = รอบปัจจุบัน · วงเหลืองจาง = เทศกาล</p>
+      <div class="tl" id="tlBox"><div class="empty">ยังไม่มีข้อมูล</div></div></div>
     <div class="race-grid">
       <div class="panel"><h2>ปฏิทินตลาด</h2><p class="why">น้ำหนักความต้องการซื้อต่อรอบ · เหลือง = เทศกาล (Specialty ต้องการมาก) · แดง = ใกล้ปิดตลาด</p><div id="calBox"><div class="empty">ยังไม่มีข้อมูล</div></div></div>
       <div class="panel"><h2>ผลรายรอบ</h2><p class="why">แท่ง = กก. ที่ขายได้ · ตัวเลขใต้แท่ง = ราคาเฉลี่ยเทียบ TV ของส่วนที่ขายได้ · เทา = รอบซ้อม</p><div id="roundBox"><div class="empty">ยังไม่มีข้อมูล</div></div></div>
@@ -851,6 +870,18 @@ function renderMetrics() {
       const cls = /เทศกาล/.test(c.label || "") ? "fest" : /ใกล้ปิด|สุดท้าย/.test(c.label || "") ? "end" : "";
       return `<span class="${cls} ${r === cur ? "cur" : r < cur ? "past" : ""}" title="${esc(c.label)}">R${r}<small>×${c.demand_weight ?? "-"}</small></span>`; }).join("")}</div>
      <div class="muted" style="font-size:12px">${cal.map(c => `R${esc(c.rounds)} ${esc(c.label)} ×${c.demand_weight}${c.specialty_share != null ? " (Specialty " + c.specialty_share + ")" : ""}`).join(" · ")}</div>`;
+
+  // ไทม์ไลน์รอบ
+  { const byId = {}; (M.rows || []).forEach(r => byId[r.round] = r);
+    const prac = (M.rows || []).filter(r => r.kind === "practice").map(r => r.round);
+    const ids = [...new Set([...(prac.length ? prac : ["P1", "P2"]), ...Array.from({ length: of || 15 }, (_, i) => "R" + (i + 1))])];
+    $("tlBox").innerHTML = `<div class="tl">${ids.map(id => { const r = byId[id], isP = /^P/.test(id), n = +id.slice(1);
+      const c = wOf(n) || {}, fest = !isP && /เทศกาล/.test(c.label || "");
+      const isCur = M.round_id === id, ratio = r && r.kg_sent ? r.kg_sold / r.kg_sent : null;
+      const cls = isCur ? "cur" : r ? (ratio >= 0.85 ? "ok" : ratio > 0 ? "part" : r.kg_sent ? "miss" : "") : "";
+      const tip = r ? `${id}: ยื่น ${fmt(r.kg_sent)} กก. ขาย ${fmt(r.kg_sold)} กก.` : `${id}: ยังไม่ถึง${c.label ? " · " + c.label : ""}`;
+      return `<div class="st ${cls} ${r || isCur ? "done" : ""} ${isP ? "prac" : ""} ${fest ? "fest" : ""}" title="${esc(tip)}"><i>${esc(id)}</i>
+        <em>${r && r.kg_sent ? fmt(100 * ratio) + "%" : isCur ? "กำลังเล่น" : "-"}</em><small>${r && r.markup ? "×" + fmt(r.markup, 2) : ""}</small></div>`; }).join("")}</div>`; }
 
   // รายรอบ
   const rows = M.rows || [], mx = Math.max(1, ...rows.map(r => r.kg_sent));
