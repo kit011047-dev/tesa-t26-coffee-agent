@@ -20,7 +20,7 @@ BAG = 60
 #       Price each type differently and move the markups after each round's results
 #       (ACCEPTED -> ask a bit more, OUTBID / ABOVE_LIMIT -> ask less) — จุดนี้ปรับแล้วได้ผลมากที่สุด
 MARKUP = {"SPECIALTY": 1.00, "COMMERCIAL": 1.00, "INSTANT": 1.00}
-MIN_MARKUP, MAX_MARKUP = 0.85, 1.30   # unsold beans go to salvage at 0.80 × TV, so never go near that
+MIN_MARKUP, MAX_MARKUP = 0.82, 1.30   # unsold beans go to salvage at 0.80 × TV, so never go near that
 PACE = 1.6                            # [T26] จูนด้วย tools/sim2.py: 1.3 -> 1.6 (ยื่นต่อรอบมากขึ้น ของไม่กองรอบท้าย)
 
 # ===== [T26] กลยุทธ์ทีม: ขั้นบันไดราคา + เรียนรู้เพดานแยกผู้ซื้อแต่ละราย =====
@@ -37,6 +37,13 @@ OUTBID_ACCEL = True                   # แพ้คู่แข่งติด�
 OUTBID_MAX_STEP = 0.03
 SPREAD = 3                            # แบ่งกระสอบของล็อตหนึ่งไปได้ถึง 3 RFQ ต่อรอบ (กระจายความเสี่ยงแพ้ใบเดียว)
 CAP_ORDER = "tv"                      # capacity จำกัด: "tv" = ล็อตแพงก่อน | "margin" = กำไรเหนือ 0.80×TV มากสุดก่อน
+# [T26 20พย. R6+] จาก market_summary R5: Commercial มีคู่แข่ง 25–50 ราย/ใบ เฉลี่ย 111–114 บาท/กก. เราแพ้ 83%
+# capacity 300 กก./รอบ แพ้ = เสียช่องทั้งรอบ -> จำกัดราคาสูงสุดต่อประเภทให้ชนะ (ขาย ×0.89 ยังดีกว่าเหลือ ×0.80)
+PRICE_CAP = {"SPECIALTY": 0.98, "COMMERCIAL": 0.89, "INSTANT": 0.90}
+# [T26 20พย. R13+] R12: Commercial เฉลี่ย ~101 บาท/กก. เราแพ้ 4/5 ที่ ×0.87–0.89 · Instant เราชนะ 100% ที่ ×0.88–0.90
+# ช่วงท้ายให้ทุกล็อตยื่น Instant ได้และได้ช่องก่อน · ราคาต่ำสุดลดเป็น ×0.82 (ยังเหนือ ×0.80 ของที่ขายไม่ออก)
+ENDGAME_INSTANT_RL = 3
+INSTANT_FIRST = True                  # ล็อตที่ขายได้แค่ Instant (คู่แข่งน้อย ซื้อไม่ครบ) ได้ช่อง capacity ก่อน
 CAP_PRESSURE = 0.02                   # capacity ไม่พอขายหมด -> ลดราคาเพิ่มเท่านี้
 LADDER_ACROSS = False                 # ใบละ 1 กระสอบ + ยังไม่รู้จักผู้ซื้อ -> ไล่ขั้นบันไดข้ามใบ
 SKIP_SPEC_FAILED = True               # เคยโดน SPEC_MISMATCH กับประเภทผู้ซื้อไหน -> เลิกยื่นคู่นั้น (และปล่อยไปขาย Instant ได้ทันที)
@@ -192,7 +199,13 @@ def learn(memory, tv: dict) -> dict:
             k["n"] += len(obs)
             if over:
                 k["ceil"] = min(k["ceil"], min(over))
-            if sold:
+            if sold and len(lost) > len(sold):
+                # [T26 20พย.] แพ้ราคามากกว่าขายได้ -> คู่แข่งต่ำกว่าเรา ลดลงจากขั้นต่ำสุดที่ยื่น (เดิมค้างราคาที่ขายได้ ทำให้ OUTBID 83%)
+                k["best"] = max(sold + ([k["best"]] if k["best"] else []))
+                k["streak"] += 1
+                step = min(STEP_OUTBID * k["streak"], OUTBID_MAX_STEP) if OUTBID_ACCEL else STEP_OUTBID
+                nxt = min(m for m, _ in obs) - step
+            elif sold:
                 k["streak"] = 0
                 k["best"] = max(sold + ([k["best"]] if k["best"] else []))
                 # ขายได้ทุกขั้นที่ยื่น -> ยังมีที่ว่างข้างบน ขยับขึ้น / มีขั้นที่สูงกว่าแล้วไม่ได้ -> คงราคาที่ขายได้
@@ -256,7 +269,7 @@ def rule_plan(state: dict, ctx: Context, cands: list[dict]) -> list[dict]:
     rfq_left = {r["rfq_id"]: r["bags"] for r in state["rfqs"]}
     # ล็อตที่เข้าสเปก Commercial/Specialty ได้ ไม่ขาย Instant (จ่ายน้อยกว่า) จนกว่าจะเหลือ 2 รอบสุดท้าย
     premium_ok = {c["lot_id"] for c in cands if c["buyer_type"] != "INSTANT"}
-    pool = [c for c in cands if not (c["buyer_type"] == "INSTANT" and c["lot_id"] in premium_ok and rl > 2)]
+    pool = [c for c in cands if not (c["buyer_type"] == "INSTANT" and c["lot_id"] in premium_ok and rl > ENDGAME_INSTANT_RL)]
     price = {id(c): markup_for(c, learned, rl) for c in pool}
     # [T26] capacity ต่อรอบ (วันที่ 18, 20): ถ้าของที่ขายได้เหลือมากกว่า capacity ที่เหลือทั้งเกม -> ยอมลดราคา
     cap = state.get("capacity_left_kg")
@@ -265,7 +278,8 @@ def rule_plan(state: dict, ctx: Context, cands: list[dict]) -> list[dict]:
         if sellable > cap * rl:
             for k, (m, known, ceil) in price.items():
                 price[k] = (max(m - CAP_PRESSURE, MIN_MARKUP), known, ceil)
-    pool.sort(key=lambda c: (-c["tv"], -price[id(c)][0]))   # sort แบบ stable: RFQ ที่ราคาเท่ากันยังคงลำดับสุ่ม
+    pool.sort(key=lambda c: (0 if INSTANT_FIRST and (c["lot_id"] not in premium_ok or (rl <= ENDGAME_INSTANT_RL and c["buyer_type"] == "INSTANT")) else 1,
+                             -c["tv"], -price[id(c)][0]))   # sort แบบ stable: RFQ ที่ราคาเท่ากันยังคงลำดับสุ่ม
     plan = []
     # กระจาย: ล็อตหนึ่งยื่นได้หลาย RFQ ต่อรอบ (ใบละไม่เกิน budget / SPREAD) ถ้าแพ้ใบหนึ่งยังมีลุ้นอีกใบ
     per_rfq = {l: max(1, math.ceil(b / BAG / SPREAD)) for l, b in budget.items()}
@@ -299,7 +313,11 @@ def rule_plan(state: dict, ctx: Context, cands: list[dict]) -> list[dict]:
             i = step_i.get((c["lot_id"], c["buyer_type"]), 0)
             step_i[(c["lot_id"], c["buyer_type"])] = i + 1
             m = max(m + LADDER[i % len(LADDER)], MIN_MARKUP)
+        merged_cap: dict = {}
         for n, mk in split_bags(bags, m, known, ceil):
+            mk = round(max(min(mk, PRICE_CAP.get(c["buyer_type"], 9.0)), MIN_MARKUP), 3)
+            merged_cap[mk] = merged_cap.get(mk, 0) + n
+        for mk, n in sorted(merged_cap.items(), reverse=True):
             plan.append({"lot_id": c["lot_id"], "rfq_id": c["rfq_id"], "bags": n, "markup": mk})
         budget[c["lot_id"]] -= bags * BAG
         rfq_left[c["rfq_id"]] -= bags
@@ -533,6 +551,7 @@ def llm_coordinate(state: dict, ctx: Context, plan: list[dict]) -> tuple[list[di
             # กันราคาไหลลงสะสม: กฎเรียนรู้จากราคาที่ยื่นจริง ถ้า LLM กดลงทุกรอบ ราคาจะลดต่อเนื่อง
             # -> ไม่ให้ต่ำกว่าราคาที่ผู้ซื้อรายนี้เคยจ่ายสูงสุด − COORD_DRIFT
             m = max(m, min(p["markup"], best - COORD_DRIFT))
+        m = min(m, PRICE_CAP.get(typ, 9.0))              # [T26 20พย.] LLM ดันเกินเพดานราคาต่อประเภทไม่ได้
         m = round(min(max(m, MIN_MARKUP), MAX_MARKUP), 3)
         changed += abs(m - p["markup"]) > 1e-9
         out.append({**p, "markup": m})
